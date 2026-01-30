@@ -242,14 +242,14 @@ async function sendToManager(chatId, user, fromUser, finalPrice, area) {
   console.log(`📱 Телефон клиента: ${user.phone}`);
   
   // Проверяем ID менеджера
-  if (!ADMIN_CHAT_ID || ADMIN_CHAT_ID === 'ВАШ_CHAT_ID_ЦИФРАМИ') {
+  if (!ADMIN_CHAT_ID || ADMIN_CHAT_ID === '7952018996') {
     console.log('❌ ОШИБКА: ADMIN_CHAT_ID не указан!');
     return;
   }
   
   try {
-    // Формируем сообщение для менеджера
-    const adminMessage = 
+    // Формируем сообщение для менеджера - НАЧИНАЕМ С БАЗОВОГО ТЕКСТА
+    let adminMessage = 
       `🔥 *НОВАЯ ЗАЯВКА #${requestId}*\n\n` +
       `👤 *Клиент:* ${fromUser.first_name || 'Не указано'}\n` +
       `👤 Username: @${fromUser.username || 'нет'}\n` +
@@ -273,11 +273,7 @@ async function sendToManager(chatId, user, fromUser, finalPrice, area) {
     
     console.log(`📝 Формирую заявку...`);
     
-    // ⚠️ ИСПРАВЛЕНИЕ: убираем неработающую кнопку tel:
-    // Вместо этого просто показываем телефон текстом
-    const phoneForCall = user.phone.replace(/\D/g, '');
-    
-    // Отправляем менеджеру ПРОСТОЕ сообщение без кнопок с tel:
+    // Отправляем менеджеру ПРОСТОЕ сообщение
     const sent = await bot.sendMessage(ADMIN_CHAT_ID, adminMessage, {
       parse_mode: 'Markdown'
     });
@@ -287,10 +283,12 @@ async function sendToManager(chatId, user, fromUser, finalPrice, area) {
     console.log(`📞 Телефон клиента в заявке: ${user.phone}`);
     
     // Отправляем второе сообщение с инструкцией
+    const phoneForCall = user.phone.replace(/\D/g, '');
+    
     await bot.sendMessage(ADMIN_CHAT_ID,
       `📞 *Контакты клиента:*\n` +
-      `Телефон: ${user.phone}\n` +
-      `Для связи: tg://user?id=${chatId}\n\n` +
+      `Телефон: \`${user.phone}\`\n` +
+      `Для Telegram: \`tg://user?id=${chatId}\`\n\n` +
       `📋 *Быстрые действия:*`,
       {
         parse_mode: 'Markdown',
@@ -424,7 +422,7 @@ bot.on('polling_error', (error) => {
 });
 
 console.log('==========================================');
-console.log('🤖 БОТ ЗАПУЩЕН С ИСПРАВЛЕНИЕМ ОШИБКИ!');
+console.log('🤖 БОТ ЗАПУЩЕН С ОКОНЧАТЕЛЬНЫМ ИСПРАВЛЕНИЕМ!');
 console.log('📞 Телефон компании: 8 (923) 811-54-32');
 console.log('💬 Менеджер: @systema365');
 console.log('👑 ID менеджера:', ADMIN_CHAT_ID);
