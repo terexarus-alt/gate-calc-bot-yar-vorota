@@ -2,162 +2,79 @@ const TelegramBot = require('node-telegram-bot-api');
 const token = process.env.TELEGRAM_TOKEN || 'ВАШ_ТОКЕН';
 const bot = new TelegramBot(token, { polling: true });
 
-const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID || 'ВАШ_CHAT_ID';
+// ⚠️ УКАЖИТЕ РЕАЛЬНЫЙ ID МЕНЕДЖЕРА!
+const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID || 'ВАШ_CHAT_ID_ЦИФРАМИ';
 
-console.log('🚀 Бот запущен! Сначала телефон, потом расчет!');
+console.log('🚀 Запускаю супер-простого бота...');
 
-// ХРАНИЛИЩЕ
-const userData = {}; // {chatId: {phone, step, width, height, automation, installation}}
+// ВСЕ ДАННЫЕ В ОДНОМ МЕСТЕ
+const users = {};
 
-// КЛАВИАТУРЫ
-const phoneKeyboard = {
-  reply_markup: {
-    keyboard: [
-      ['📱 Поделиться телефоном'],
-      ['🔄 Отмена']
-    ],
-    resize_keyboard: true
-  }
-};
-
-const knowsSizeKeyboard = {
-  reply_markup: {
-    keyboard: [
-      ['✅ Знаю размеры'],
-      ['📞 Вызвать замерщика'],
-      ['🔄 Отмена']
-    ],
-    resize_keyboard: true
-  }
-};
-
-const automationKeyboard = {
-  reply_markup: {
-    keyboard: [
-      ['✅ С пультом'],
-      ['❌ Без автоматики'],
-      ['🔄 Отмена']
-    ],
-    resize_keyboard: true
-  }
-};
-
-const installationKeyboard = {
-  reply_markup: {
-    keyboard: [
-      ['✅ Установка под ключ'],
-      ['❌ Установлю сам'],
-      ['🔄 Отмена']
-    ],
-    resize_keyboard: true
-  }
-};
-
-const confirmKeyboard = {
-  reply_markup: {
-    keyboard: [
-      ['✅ Отправить заявку'],
-      ['🔄 Новый расчет']
-    ],
-    resize_keyboard: true
-  }
-};
-
-// =========== START ===========
+// 1. START
 bot.onText(/\/start/, (msg) => {
   const chatId = msg.chat.id;
-  userData[chatId] = { step: 'needPhone' };
+  console.log(`▶️ /start от ${chatId}`);
   
-  const welcomeMsg = 
-    `🏭 *Калькулятор секционных ворот*\n\n` +
-    `📞 *Для начала расчета нам нужен ваш номер телефона*\n\n` +
-    `Это нужно чтобы:\n` +
-    `✅ Сохранить ваш расчет\n` +
-    `✅ Связаться для уточнения деталей\n` +
-    `✅ Отправить персональное предложение\n\n` +
-    `👇 *Нажмите кнопку ниже чтобы поделиться телефоном:*`;
+  users[chatId] = {
+    step: 'askPhone',
+    phone: null
+  };
   
-  bot.sendMessage(chatId, welcomeMsg, {
-    parse_mode: 'Markdown',
-    ...phoneKeyboard
-  });
+  bot.sendMessage(chatId,
+    '📞 *Введите ваш номер телефона:*\n\n' +
+    'Например: 89246345577\n' +
+    'Или в любом другом формате',
+    { parse_mode: 'Markdown' }
+  );
 });
 
-// =========== КОНТАКТ (Телефон) ===========
-bot.on('contact', (msg) => {
+// 2. ВСЕ СООБЩЕНИЯ
+bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
-  const contact = msg.contact;
+  const text = msg.text || '';
   
-  if (contact.user_id === msg.from.id) {
-    // Сохраняем телефон
-    userData[chatId] = {
-      step: 'askSize',
-      phone: contact.phone_number,
-      firstName: msg.from.first_name,
-      username: msg.from.username
-    };
-    
-    console.log(`✅ Получен телефон от ${chatId}: ${contact.phone_number}`);
-    
-    bot.sendMessage(chatId,
-      `✅ *Отлично! Номер получен: ${contact.phone_number}*\n\n` +
-      `📏 *Теперь укажите размеры проема*\n\n` +
-      `Вам известны точные размеры?`,
-      { parse_mode: 'Markdown', ...knowsSizeKeyboard }
-    );
-  }
-});
-
-// =========== ВСЕ СООБЩЕНИЯ ===========
-bot.on('message', (msg) => {
-  if (!msg.text || msg.chat.type === 'channel') return;
+  console.log(`📩 ${chatId}: "${text}"`);
   
-  const chatId = msg.chat.id;
-  const text = msg.text;
-  
-  console.log(`📨 ${chatId}: "${text}" | Шаг: ${userData[chatId]?.step || 'нет'}`);
-  
-  // Если пользователя нет
-  if (!userData[chatId]) {
-    userData[chatId] = { step: 'needPhone' };
+  // Если нет пользователя
+  if (!users[chatId]) {
+    users[chatId] = { step: 'askPhone' };
   }
   
-  const user = userData[chatId];
+  const user = users[chatId];
+  console.log(`📊 Шаг пользователя: ${user.step}`);
   
-  // ОТМЕНА
-  if (text === '🔄 Отмена' || text === '🔄 Новый расчет') {
-    userData[chatId] = { step: 'needPhone' };
-    bot.sendMessage(chatId, '🚀 Начать новый расчет? Отправьте /start');
+  // ЕСЛИ ЖДЕМ ТЕЛЕФОН
+  if (user.step === 'askPhone') {
+    if (text.length > 5 && /\d/.test(text)) {
+      user.phone = text;
+      user.step = 'askSize';
+      console.log(`✅ Телефон сохранен: ${text}`);
+      
+      bot.sendMessage(chatId,
+        `✅ Номер принят: ${text}\n\n` +
+        '📏 *Вам известны размеры проема?*',
+        {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            keyboard: [
+              ['✅ Знаю размеры'],
+              ['📞 Вызвать замерщика'],
+              ['🔄 Начать заново']
+            ],
+            resize_keyboard: true
+          }
+        }
+      );
+    } else {
+      bot.sendMessage(chatId, '❌ Пожалуйста, введите номер телефона');
+    }
     return;
   }
   
-  // НАЧАЛО - ЗАПРОС ТЕЛЕФОНА
-  if (user.step === 'needPhone') {
-    if (text === '📱 Поделиться телефоном') {
-      bot.sendMessage(chatId,
-        `📞 *Поделитесь контактом*\n\n` +
-        `Нажмите на кнопку "📎" (скрепка) рядом с полем ввода,\n` +
-        `выберите "Контакты" и отправьте свой контакт.\n\n` +
-        `Или просто напишите номер вручную:\n` +
-        `89246345577`,
-        { parse_mode: 'Markdown' }
-      );
-    } else if (text.match(/^[\d\+\(\)\s-]{5,20}$/)) {
-      // Если ввели номер вручную
-      user.step = 'askSize';
-      user.phone = text;
-      user.firstName = msg.from.first_name;
-      user.username = msg.from.username;
-      
-      console.log(`✅ Введен телефон вручную: ${text}`);
-      
-      bot.sendMessage(chatId,
-        `✅ *Отлично! Номер получен: ${text}*\n\n` +
-        `📏 *Теперь укажите размеры проема*\n\n` +
-        `Вам известны точные размеры?`,
-        { parse_mode: 'Markdown', ...knowsSizeKeyboard }
-      );
-    }
+  // НАЧАТЬ ЗАНОВО
+  if (text === '🔄 Начать заново') {
+    users[chatId] = { step: 'askPhone' };
+    bot.sendMessage(chatId, '📞 Введите ваш номер телефона:');
     return;
   }
   
@@ -165,11 +82,12 @@ bot.on('message', (msg) => {
   if (user.step === 'askSize') {
     if (text === '✅ Знаю размеры') {
       user.step = 'askWidth';
-      bot.sendMessage(chatId, '📏 *Введите ширину проема (мм):*\nПример: 3000', 
+      bot.sendMessage(chatId, '📏 *Введите ширину (мм):*\nПример: 3000', 
         { parse_mode: 'Markdown' }
       );
     } else if (text === '📞 Вызвать замерщика') {
-      sendToManager(chatId, user, 'Запрос на выезд замерщика');
+      // Сразу отправляем заявку на замерщика
+      sendToManager(chatId, user, '📐 Запрос на замерщика');
       return;
     }
     return;
@@ -200,7 +118,17 @@ bot.on('message', (msg) => {
     user.height = height;
     user.step = 'askAutomation';
     bot.sendMessage(chatId, `✅ Размеры: ${user.width} × ${height} мм\n\n⚙️ *Открывать пультом?*`,
-      { parse_mode: 'Markdown', ...automationKeyboard }
+      {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          keyboard: [
+            ['✅ С пультом'],
+            ['❌ Без автоматики'],
+            ['🔄 Начать заново']
+          ],
+          resize_keyboard: true
+        }
+      }
     );
     return;
   }
@@ -209,42 +137,52 @@ bot.on('message', (msg) => {
   if (user.step === 'askAutomation') {
     if (text === '✅ С пультом') {
       user.automation = true;
-      user.step = 'askInstallation';
-      bot.sendMessage(chatId, '🏗️ *Нужна установка?*',
-        { parse_mode: 'Markdown', ...installationKeyboard }
-      );
     } else if (text === '❌ Без автоматики') {
       user.automation = false;
-      user.step = 'askInstallation';
-      bot.sendMessage(chatId, '🏗️ *Нужна установка?*',
-        { parse_mode: 'Markdown', ...installationKeyboard }
-      );
+    } else {
+      bot.sendMessage(chatId, '❌ Выберите вариант');
+      return;
     }
+    
+    user.step = 'askInstallation';
+    bot.sendMessage(chatId, '🏗️ *Нужна установка?*',
+      {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          keyboard: [
+            ['✅ Установка под ключ'],
+            ['❌ Установлю сам'],
+            ['🔄 Начать заново']
+          ],
+          resize_keyboard: true
+        }
+      }
+    );
     return;
   }
   
   // УСТАНОВКА
   if (user.step === 'askInstallation') {
-    if (text === '✅ Установка под ключ' || text === '❌ Установлю сам') {
-      user.installation = text === '✅ Установка под ключ';
-      user.step = 'showResult';
-      showResult(chatId, user);
+    if (text === '✅ Установка под ключ') {
+      user.installation = true;
+    } else if (text === '❌ Установлю сам') {
+      user.installation = false;
+    } else {
+      bot.sendMessage(chatId, '❌ Выберите вариант');
+      return;
     }
-    return;
-  }
-  
-  // ПОДТВЕРЖДЕНИЕ ЗАЯВКИ
-  if (user.step === 'showResult') {
-    if (text === '✅ Отправить заявку') {
-      sendToManager(chatId, user, 'Расчет стоимости');
-    }
+    
+    // ПОКАЗЫВАЕМ РЕЗУЛЬТАТ И СРАЗУ ОТПРАВЛЯЕМ!
+    await showResultAndSend(chatId, user, msg.from);
     return;
   }
 });
 
-// =========== ПОКАЗ РЕЗУЛЬТАТА ===========
-function showResult(chatId, user) {
-  // Расчет
+// 3. ПОКАЗАТЬ РЕЗУЛЬТАТ И ОТПРАВИТЬ
+async function showResultAndSend(chatId, user, fromUser) {
+  console.log(`🧮 Делаю расчет для ${chatId}`);
+  
+  // Расчет стоимости
   const area = (user.width / 1000) * (user.height / 1000);
   let price = area * 18000;
   if (user.automation) price += 45000;
@@ -258,159 +196,202 @@ function showResult(chatId, user) {
   
   const finalPrice = Math.round(price * (1 - discount));
   
-  // Сохраняем
-  user.finalPrice = finalPrice;
-  user.area = area.toFixed(2);
-  
+  // Показываем клиенту
   const message = 
     `✅ *Расчет готов!*\n\n` +
-    `📋 *Ваши параметры:*\n` +
+    `📋 *Параметры:*\n` +
     `• Ширина: ${user.width} мм\n` +
     `• Высота: ${user.height} мм\n` +
     `• Автоматика: ${user.automation ? 'Да' : 'Нет'}\n` +
     `• Установка: ${user.installation ? 'Под ключ' : 'Сам'}\n\n` +
-    `💰 *Примерная стоимость:*\n` +
-    `*~${finalPrice.toLocaleString('ru-RU')} ₽*\n\n` +
-    `📞 *Ваш телефон:* ${user.phone}\n\n` +
-    `👇 *Отправляем заявку менеджеру?*`;
+    `💰 *Стоимость:* ~${finalPrice.toLocaleString('ru-RU')} ₽\n\n` +
+    `📞 *Отправляем заявку менеджеру...*`;
   
-  bot.sendMessage(chatId, message, {
-    parse_mode: 'Markdown',
-    ...confirmKeyboard
-  });
-}
-
-// =========== ОТПРАВКА МЕНЕДЖЕРУ ===========
-function sendToManager(chatId, user, requestType) {
-  const requestId = 'REQ-' + Date.now().toString().slice(-6);
+  await bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
   
-  console.log(`📤 Отправляю заявку #${requestId} менеджеру`);
+  // СРАЗУ ОТПРАВЛЯЕМ МЕНЕДЖЕРУ
+  await sendToManager(chatId, user, fromUser, finalPrice, area.toFixed(2));
   
-  // 1. Подтверждение клиенту
-  const confirmMsg = 
-    `📨 *Заявка #${requestId} отправлена!*\n\n` +
-    `✅ Ваши данные переданы менеджеру\n` +
-    `⏱️ *Свяжемся с вами в течение 15 минут*\n\n` +
-    `📞 *Для связи также:*\n` +
-    `8 (923) 811-54-32\n` +
-    `💬 @systema365\n\n` +
-    `👇 *Быстрая связь:*`;
-  
-  bot.sendMessage(chatId, confirmMsg, {
-    parse_mode: 'Markdown',
-    reply_markup: {
-      inline_keyboard: [
-        [
-          { text: '💬 Написать менеджеру', url: 'https://t.me/systema365' },
-          { text: '📞 Позвонить', url: 'tel:89238115432' }
-        ],
-        [
-          { text: '🔄 Новый расчет', callback_data: 'new_calc' }
-        ]
-      ]
-    }
-  });
-  
-  // 2. Отправка менеджеру
-  if (ADMIN_CHAT_ID && ADMIN_CHAT_ID !== 'ВАШ_CHAT_ID') {
-    try {
-      let managerMessage = 
-        `🔥 *НОВАЯ ЗАЯВКА #${requestId}*\n\n` +
-        `👤 *Клиент:* ${user.firstName || 'Не указано'}\n` +
-        `👤 Username: @${user.username || 'нет'}\n` +
-        `🆔 ID: ${chatId}\n` +
-        `📱 *Телефон:* ${user.phone}\n` +
-        `📅 Время: ${new Date().toLocaleString('ru-RU')}\n` +
-        `📋 *Тип:* ${requestType}\n\n`;
-      
-      // Если есть расчет
-      if (user.width && user.height) {
-        managerMessage += 
-          `📏 *ПАРАМЕТРЫ РАСЧЕТА:*\n` +
-          `• Ширина: ${user.width} мм\n` +
-          `• Высота: ${user.height} мм\n` +
-          `• Автоматика: ${user.automation ? '✅ Да' : '❌ Нет'}\n` +
-          `• Установка: ${user.installation ? '✅ Под ключ' : '❌ Сам'}\n` +
-          `• Площадь: ${user.area} м²\n` +
-          `💰 *Стоимость:* ~${user.finalPrice.toLocaleString('ru-RU')} ₽\n\n`;
-      }
-      
-      managerMessage += `💬 *Для ответа клиенту ответьте на это сообщение*`;
-      
-      bot.sendMessage(ADMIN_CHAT_ID, managerMessage, {
+  // Показываем подтверждение
+  setTimeout(() => {
+    bot.sendMessage(chatId,
+      `📨 *Заявка отправлена!*\n\n` +
+      `✅ Ваши данные переданы менеджеру\n` +
+      `⏱️ Свяжемся с вами в течение 15 минут\n\n` +
+      `📞 *Контакты для связи:*\n` +
+      `8 (923) 811-54-32\n` +
+      `💬 @systema365\n\n` +
+      `🔄 Для нового расчета отправьте /start`,
+      {
         parse_mode: 'Markdown',
         reply_markup: {
           inline_keyboard: [[
-            { text: '📞 Позвонить клиенту', url: `tel:${user.phone.replace(/\D/g, '')}` },
-            { text: '💬 Ответить', callback_data: `reply_${chatId}` }
+            { text: '💬 Написать менеджеру', url: 'https://t.me/systema365' },
+            { text: '📞 Позвонить', url: 'tel:89238115432' }
           ]]
         }
-      });
-      
-      console.log(`✅ Заявка #${requestId} отправлена менеджеру ${ADMIN_CHAT_ID}`);
-      
-    } catch (error) {
-      console.error('❌ Ошибка отправки менеджеру:', error.message);
-    }
-  } else {
-    console.log('⚠️ ADMIN_CHAT_ID не настроен');
-  }
-  
-  // Сбрасываем
-  userData[chatId] = { step: 'needPhone' };
+      }
+    );
+  }, 1000);
 }
 
-// =========== ИНЛАЙН КНОПКИ ===========
-bot.on('callback_query', (query) => {
-  const chatId = query.message.chat.id;
-  const data = query.data;
+// 4. ОТПРАВКА МЕНЕДЖЕРУ
+async function sendToManager(chatId, user, fromUser, finalPrice, area) {
+  const requestId = 'REQ-' + Date.now().toString().slice(-6);
   
-  if (data === 'new_calc') {
-    userData[chatId] = { step: 'needPhone' };
-    bot.sendMessage(chatId, '🚀 Начать новый расчет? Отправьте /start');
+  console.log(`📤 Пытаюсь отправить заявку #${requestId} менеджеру ${ADMIN_CHAT_ID}`);
+  
+  // Проверяем ID менеджера
+  if (!ADMIN_CHAT_ID || ADMIN_CHAT_ID === 'ВАШ_CHAT_ID_ЦИФРАМИ') {
+    console.log('❌ ОШИБКА: ADMIN_CHAT_ID не указан или указан неправильно!');
+    console.log('⚠️ Укажите реальный ID менеджера в коде!');
+    return;
   }
   
-  bot.answerCallbackQuery(query.id);
+  try {
+    // Формируем сообщение для менеджера
+    const adminMessage = 
+      `🔥 *НОВАЯ ЗАЯВКА #${requestId}*\n\n` +
+      `👤 *Клиент:* ${fromUser.first_name || 'Не указано'}\n` +
+      `👤 Username: @${fromUser.username || 'нет'}\n` +
+      `🆔 ID: ${chatId}\n` +
+      `📱 *Телефон:* ${user.phone}\n` +
+      `📅 Время: ${new Date().toLocaleString('ru-RU')}\n\n` +
+      `📏 *Параметры заказа:*\n` +
+      `• Ширина: ${user.width} мм\n` +
+      `• Высота: ${user.height} мм\n` +
+      `• Автоматика: ${user.automation ? '✅ Да' : '❌ Нет'}\n` +
+      `• Установка: ${user.installation ? '✅ Под ключ' : '❌ Сам'}\n` +
+      `• Площадь: ${area} м²\n` +
+      `💰 *Стоимость:* ~${finalPrice.toLocaleString('ru-RU')} ₽\n\n` +
+      `💬 *Для связи с клиентом:*`;
+    
+    console.log(`📝 Текст заявки:\n${adminMessage.substring(0, 200)}...`);
+    
+    // Отправляем менеджеру
+    const sent = await bot.sendMessage(ADMIN_CHAT_ID, adminMessage, {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [[
+          { text: '📞 Позвонить клиенту', url: `tel:${user.phone.replace(/\D/g, '')}` },
+          { text: '💬 Написать в Telegram', url: `tg://user?id=${chatId}` }
+        ]]
+      }
+    });
+    
+    console.log(`✅ ЗАЯВКА ОТПРАВЛЕНА! ID сообщения: ${sent.message_id}`);
+    console.log(`✅ Менеджер: ${ADMIN_CHAT_ID} получит заявку`);
+    
+  } catch (error) {
+    console.error('❌ ОШИБКА ОТПРАВКИ:', error.message);
+    console.error('🔍 Детали ошибки:', error);
+    
+    // Если ошибка - показываем в консоли что нужно сделать
+    if (error.code === 400 && error.response?.body?.description?.includes('chat not found')) {
+      console.log('⚠️ ПРОБЛЕМА: Бот не может писать менеджеру!');
+      console.log('🔧 РЕШЕНИЕ:');
+      console.log('1. Убедитесь что ADMIN_CHAT_ID правильный');
+      console.log('2. Напишите боту в личку сообщение');
+      console.log('3. Или добавьте бота в чат с менеджером');
+    }
+  }
+}
+
+// 5. КОМАНДА ДЛЯ ПРОВЕРКИ
+bot.onText(/\/testmanager/, async (msg) => {
+  const chatId = msg.chat.id;
+  
+  console.log(`🔧 Тестирую отправку менеджеру ${ADMIN_CHAT_ID}`);
+  
+  if (!ADMIN_CHAT_ID || ADMIN_CHAT_ID === 'ВАШ_CHAT_ID_ЦИФРАМИ') {
+    bot.sendMessage(chatId, '❌ ADMIN_CHAT_ID не указан в коде!');
+    return;
+  }
+  
+  try {
+    // Пробуем отправить тестовое сообщение
+    await bot.sendMessage(ADMIN_CHAT_ID, 
+      '✅ ТЕСТ: Бот может отправлять сообщения!\n' +
+      '📅 ' + new Date().toLocaleString('ru-RU'),
+      { parse_mode: 'Markdown' }
+    );
+    
+    bot.sendMessage(chatId, `✅ Тест отправлен менеджеру ${ADMIN_CHAT_ID}`);
+    console.log(`✅ Тест отправлен успешно!`);
+    
+  } catch (error) {
+    bot.sendMessage(chatId, `❌ Ошибка: ${error.message}`);
+    console.error('❌ Тест не прошел:', error.message);
+  }
 });
 
-// =========== DEBUG ===========
-bot.onText(/\/debug/, (msg) => {
-  const chatId = msg.chat.id;
-  const user = userData[chatId] || {};
-  
-  const debugMsg = 
-    `🔧 *ДЕБАГ*\n\n` +
-    `🆔 Chat ID: ${chatId}\n` +
-    `📊 Шаг: ${user.step || 'нет'}\n` +
-    `📱 Телефон: ${user.phone || 'не указан'}\n` +
-    `📏 Размеры: ${user.width || '?'}x${user.height || '?'}\n` +
-    `👑 Админ ID: ${ADMIN_CHAT_ID || 'не настроен'}`;
-  
-  bot.sendMessage(chatId, debugMsg, { parse_mode: 'Markdown' });
-});
-
-bot.onText(/\/testphone/, (msg) => {
+// 6. КОМАНДА ДЛЯ ПРОВЕРКИ ЗАЯВКИ
+bot.onText(/\/testorder/, async (msg) => {
   const chatId = msg.chat.id;
   
-  // Тестовый пользователь с телефоном
-  userData[chatId] = {
-    step: 'askSize',
+  console.log(`🔧 Тестовая заявка от ${chatId}`);
+  
+  // Создаем тестовые данные
+  const testUser = {
     phone: '89246345577',
-    firstName: 'Тест',
+    width: 3000,
+    height: 2500,
+    automation: true,
+    installation: true
+  };
+  
+  const testFromUser = {
+    first_name: 'Тест',
     username: 'testuser'
   };
   
-  bot.sendMessage(chatId,
-    `✅ ТЕСТ: Телефон установлен: 89246345577\n\n` +
-    `📏 Теперь можно начать расчет!\n` +
-    `Вам известны размеры проема?`,
-    { parse_mode: 'Markdown', ...knowsSizeKeyboard }
+  // Показываем результат
+  const area = (3000/1000) * (2500/1000);
+  const price = area * 18000 + 45000 + 25000;
+  const finalPrice = Math.round(price * 0.95);
+  
+  await bot.sendMessage(chatId,
+    `✅ Тестовый расчет:\n` +
+    `📱 Телефон: ${testUser.phone}\n` +
+    `📏 Размеры: ${testUser.width}x${testUser.height}\n` +
+    `💰 Стоимость: ~${finalPrice.toLocaleString('ru-RU')} ₽\n\n` +
+    `📤 Отправляю тестовую заявку...`,
+    { parse_mode: 'Markdown' }
+  );
+  
+  // Отправляем менеджеру
+  await sendToManager(chatId, testUser, testFromUser, finalPrice, area.toFixed(2));
+});
+
+// 7. КОМАНДА ДЛЯ ПРОСМОТРА ID
+bot.onText(/\/myid/, (msg) => {
+  const chatId = msg.chat.id;
+  bot.sendMessage(chatId, 
+    `🆔 *Ваш ID:* ${chatId}\n` +
+    `👤 *Имя:* ${msg.from.first_name || 'Не указано'}\n` +
+    `📝 *Username:* @${msg.from.username || 'нет'}\n\n` +
+    `👑 *ID менеджера в коде:* ${ADMIN_CHAT_ID}`,
+    { parse_mode: 'Markdown' }
   );
 });
 
+// 8. ОШИБКИ
+bot.on('polling_error', (error) => {
+  console.log('❌ Ошибка бота:', error.message);
+});
+
 console.log('==========================================');
-console.log('🤖 БОТ "СНАЧАЛА ТЕЛЕФОН" ЗАПУЩЕН');
-console.log('📱 Теперь телефон запрашивается ПЕРВЫМ!');
-console.log('📞 Менеджер: @systema365 | 8 (923) 811-54-32');
-console.log('🔧 Команды: /debug, /testphone');
+console.log('🤖 СУПЕР-ПРОСТОЙ БОТ ЗАПУЩЕН!');
+console.log('📞 Телефон: 8 (923) 811-54-32');
+console.log('💬 Менеджер: @systema365');
 console.log('==========================================');
+console.log('🔧 КОМАНДЫ ДЛЯ ТЕСТА:');
+console.log('• /testmanager - проверить связь с менеджером');
+console.log('• /testorder - отправить тестовую заявку');
+console.log('• /myid - узнать свой ID');
+console.log('==========================================');
+console.log(`⚠️ ADMIN_CHAT_ID: ${ADMIN_CHAT_ID}`);
+if (!ADMIN_CHAT_ID || ADMIN_CHAT_ID === 'ВАШ_CHAT_ID_ЦИФРАМИ') {
+  console.log('❌ ВНИМАНИЕ: ADMIN_CHAT_ID не настроен!');
+  console.log('🔧 Замените "ВАШ_CHAT_ID_ЦИФРАМИ" на реальный ID менеджера');
+}
