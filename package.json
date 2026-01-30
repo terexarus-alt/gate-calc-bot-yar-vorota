@@ -1,5 +1,5 @@
 {
-  "name": "gate-calc-bot",
+  "name": "gate-bot",
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
