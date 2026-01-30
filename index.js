@@ -96,7 +96,7 @@ bot.on('message', (msg) => {
         chatId,
         '👷 Бесплатный выезд замерщика!\n\n' +
         '📞 Телефон: 8 (923) 811-54-32\n' +
-        '💬 Менеджер: @gate_manager'
+        '💬 Менеджер: @systema365'
       );
       users[chatId] = { step: 'start' };
     }
@@ -147,7 +147,7 @@ bot.on('message', (msg) => {
     return;
   }
   
-  // Шаг 5: Установка - ГЛАВНАЯ КНОПКА!
+  // Шаг 5: Установка
   if (user.step === 'askInstallation') {
     if (text === '✅ Установка под ключ') {
       user.installation = true;
@@ -187,7 +187,7 @@ function showResult(chatId, user) {
     `💰 Итого: ~${final.toLocaleString('ru-RU')} ₽\n\n` +
     `📞 Для точного расчета:\n` +
     `Телефон: 8 (923) 811-54-32\n` +
-    `Менеджер: @gate_manager`;
+    `Менеджер: @systema365`;
   
   // Кнопки под сообщением
   const buttons = {
@@ -195,7 +195,7 @@ function showResult(chatId, user) {
       inline_keyboard: [
         [
           { text: '📞 Позвонить', callback_data: 'call' },
-          { text: '💬 Менеджер', url: 'https://t.me/gate_manager' }
+          { text: '💬 Менеджер', url: 'https://t.me/systema365' }
         ],
         [
           { text: '🔄 Новый расчет', callback_data: 'new' }
