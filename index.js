@@ -86,28 +86,40 @@ bot.onText(/\/new/, (msg) => {
 });
 
 // ============================================
-// НАЧАЛО РАСЧЕТА
+// ОБРАБОТКА СООБЩЕНИЙ
 // ============================================
 bot.on('message', (msg) => {
   const chatId = msg.chat.id;
   const text = msg.text;
   
-  // Кнопка "Начать заново" в любом месте
+  // 1. Кнопка "Начать заново" в любом месте - обрабатываем ПЕРВОЙ!
   if (text === '🔄 Начать заново') {
     userSessions.delete(chatId);
     startCalculation(chatId);
     return;
   }
   
+  // 2. Главная кнопка расчета
   if (text === '🔢 Рассчитать стоимость') {
     startCalculation(chatId);
+    return;
   }
   
-  // Обработка шагов расчета
+  // 3. Проверяем сессию пользователя
   const session = userSessions.get(chatId);
-  if (!session) return;
+  if (!session) {
+    // Если нет сессии, но пользователь что-то пишет - предлагаем начать
+    if (text && !text.startsWith('/')) {
+      bot.sendMessage(
+        chatId,
+        'Нажмите "🔢 Рассчитать стоимость" для начала расчета или "🔄 Начать заново"',
+        mainMenu
+      );
+    }
+    return;
+  }
   
-  // Кнопка "Назад" на любом этапе
+  // 4. Кнопка "Назад" на любом этапе
   if (text === '🔙 Назад') {
     handleBackButton(chatId, session);
     return;
@@ -164,6 +176,21 @@ bot.on('message', (msg) => {
       }
       
       userSessions.delete(chatId);
+    } else {
+      bot.sendMessage(
+        chatId,
+        '❌ Выберите вариант из кнопок',
+        {
+          reply_markup: {
+            keyboard: [
+              ['✅ Да, я знаю размеры'],
+              ['📞 Вызвать замерщика'],
+              ['🔄 Начать заново']
+            ],
+            resize_keyboard: true
+          }
+        }
+      );
     }
   }
   
@@ -250,14 +277,27 @@ bot.on('message', (msg) => {
     );
   }
   
-  // Шаг 5: Установка
+  // Шаг 5: Установка - ИСПРАВЛЕННЫЙ БЛОК!
   else if (session.step === 'ask_installation') {
     if (text === '✅ Нужна установка под ключ') {
       session.data.installation = true;
     } else if (text === '❌ Нет, установлю сам') {
       session.data.installation = false;
     } else {
-      bot.sendMessage(chatId, '❌ Выберите вариант из кнопок');
+      bot.sendMessage(
+        chatId,
+        '❌ Выберите вариант из кнопок',
+        {
+          reply_markup: {
+            keyboard: [
+              ['✅ Нужна установка под ключ'],
+              ['❌ Нет, установлю сам'],
+              ['🔙 Назад', '🔄 Начать заново']
+            ],
+            resize_keyboard: true
+          }
+        }
+      );
       return;
     }
     
@@ -268,7 +308,7 @@ bot.on('message', (msg) => {
 });
 
 // ============================================
-// ФУНКЦИИ
+// ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
 // ============================================
 function startCalculation(chatId) {
   userSessions.set(chatId, {
