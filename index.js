@@ -92,7 +92,30 @@ bot.on('message', (msg) => {
   const chatId = msg.chat.id;
   const text = msg.text;
   
-  // 1. Кнопка "Начать заново" в любом месте - обрабатываем ПЕРВОЙ!
+  // Проверяем сессию пользователя СНАЧАЛА
+  const session = userSessions.get(chatId);
+  
+  // Если ЕСТЬ сессия, проверяем шаг установки ОТДЕЛЬНО
+  if (session && session.step === 'ask_installation') {
+    if (text === '✅ Нужна установка под ключ') {
+      session.data.installation = true;
+      // Показываем результат
+      showResult(chatId, session.data);
+      userSessions.delete(chatId);
+      return;
+    } else if (text === '❌ Нет, установлю сам') {
+      session.data.installation = false;
+      // Показываем результат
+      showResult(chatId, session.data);
+      userSessions.delete(chatId);
+      return;
+    }
+    // Если не валидный ответ на шаге установки, продолжаем обычную обработку
+  }
+  
+  // Теперь общая обработка (кроме валидных ответов на шаге установки)
+  
+  // 1. Кнопка "Начать заново" в любом месте
   if (text === '🔄 Начать заново') {
     userSessions.delete(chatId);
     startCalculation(chatId);
@@ -105,8 +128,7 @@ bot.on('message', (msg) => {
     return;
   }
   
-  // 3. Проверяем сессию пользователя
-  const session = userSessions.get(chatId);
+  // Если нет сессии
   if (!session) {
     // Если нет сессии, но пользователь что-то пишет - предлагаем начать
     if (text && !text.startsWith('/')) {
@@ -119,7 +141,7 @@ bot.on('message', (msg) => {
     return;
   }
   
-  // 4. Кнопка "Назад" на любом этапе
+  // Кнопка "Назад" на любом этапе
   if (text === '🔙 Назад') {
     handleBackButton(chatId, session);
     return;
@@ -277,33 +299,31 @@ bot.on('message', (msg) => {
     );
   }
   
-  // Шаг 5: Установка - ИСПРАВЛЕННЫЙ БЛОК!
+  // Шаг 5: Установка - Обработка невалидных ответов
   else if (session.step === 'ask_installation') {
-    if (text === '✅ Нужна установка под ключ') {
-      session.data.installation = true;
-    } else if (text === '❌ Нет, установлю сам') {
-      session.data.installation = false;
-    } else {
-      bot.sendMessage(
-        chatId,
-        '❌ Выберите вариант из кнопок',
-        {
-          reply_markup: {
-            keyboard: [
-              ['✅ Нужна установка под ключ'],
-              ['❌ Нет, установлю сам'],
-              ['🔙 Назад', '🔄 Начать заново']
-            ],
-            resize_keyboard: true
-          }
-        }
-      );
+    // Сюда попадаем только если ответ НЕ "✅ Нужна установка под ключ" или "❌ Нет, установлю сам"
+    // так как они обработаны в начале функции
+    
+    if (text === '🔙 Назад' || text === '🔄 Начать заново') {
+      // Эти кнопки уже обработаны выше
       return;
     }
     
-    // Показываем результат
-    showResult(chatId, session.data);
-    userSessions.delete(chatId);
+    // Любой другой текст
+    bot.sendMessage(
+      chatId,
+      '❌ Выберите вариант из кнопок',
+      {
+        reply_markup: {
+          keyboard: [
+            ['✅ Нужна установка под ключ'],
+            ['❌ Нет, установлю сам'],
+            ['🔙 Назад', '🔄 Начать заново']
+          ],
+          resize_keyboard: true
+        }
+      }
+    );
   }
 });
 
