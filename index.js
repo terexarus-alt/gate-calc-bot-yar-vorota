@@ -5,7 +5,7 @@ const bot = new TelegramBot(token, { polling: true });
 console.log('Бот запущен!');
 
 // =========== ХРАНИЛИЩЕ ===========
-let users = {};
+let users = {}; // Для хранения данных по шагам
 let pendingOrders = {}; // Для хранения расчетов перед заявкой
 
 // =========== КНОПКИ ===========
@@ -68,18 +68,20 @@ bot.on('message', (msg) => {
   const chatId = msg.chat.id;
   const text = msg.text;
   
-  // Создаем пользователя если нет
-  if (!users[chatId]) users[chatId] = { step: 'start' };
-  
-  const user = users[chatId];
-  
-  // Кнопка "Сначала" всегда работает
+  // Кнопка "Сначала" всегда работает ПЕРВОЙ
   if (text === '🔄 Сначала') {
     users[chatId] = { step: 'start' };
     delete pendingOrders[chatId];
     bot.sendMessage(chatId, '🚀 Начать расчет?', keyboards.start);
     return;
   }
+  
+  // Получаем данные пользователя (создаем если нет)
+  if (!users[chatId]) {
+    users[chatId] = { step: 'start' };
+  }
+  
+  const user = users[chatId];
   
   // Главная кнопка
   if (text === '🚀 Начать расчет') {
@@ -176,6 +178,7 @@ bot.on('message', (msg) => {
         '• Установка своими силами',
         { parse_mode: 'Markdown', ...keyboards.installation }
       );
+      return;
     } else if (text === '❌ Без автоматики') {
       user.automation = false;
       user.step = 'askInstallation';
@@ -190,25 +193,38 @@ bot.on('message', (msg) => {
         '• Установка своими силами',
         { parse_mode: 'Markdown', ...keyboards.installation }
       );
+      return;
     }
-    return;
   }
   
-  // Шаг 5: Установка
+  // Шаг 5: Установка - ЭТО ВАЖНЫЙ БЛОК!
   if (user.step === 'askInstallation') {
+    console.log('Шаг установки:', text, 'данные:', user); // Для отладки
+    
     if (text === '✅ Установка под ключ') {
+      console.log('Выбрана установка под ключ');
       user.installation = true;
       showCalculationResult(chatId, user);
-    } else if (text === '❌ Установлю сам') {
+      return;
+    } 
+    
+    if (text === '❌ Установлю сам') {
+      console.log('Выбрана установка сам');
       user.installation = false;
       showCalculationResult(chatId, user);
+      return;
     }
+    
+    // Если пришел другой текст на шаге установки
+    bot.sendMessage(chatId, '❌ Пожалуйста, выберите вариант из кнопок', keyboards.installation);
     return;
   }
 });
 
 // =========== РАСЧЕТ И РЕЗУЛЬТАТ ===========
 function showCalculationResult(chatId, user) {
+  console.log('Показываем результат для:', user);
+  
   // Расчет
   const area = (user.width / 1000) * (user.height / 1000);
   let price = area * 18000;
@@ -238,7 +254,12 @@ function showCalculationResult(chatId, user) {
   
   // Сохраняем расчет для возможной заявки
   pendingOrders[chatId] = {
-    data: { ...user },
+    data: { 
+      width: user.width,
+      height: user.height,
+      automation: user.automation,
+      installation: user.installation
+    },
     finalPrice,
     area: area.toFixed(2),
     date: currentDate
@@ -294,7 +315,7 @@ function showCalculationResult(chatId, user) {
     ...buttons 
   });
   
-  // Очищаем временные данные, но оставляем расчет
+  // Очищаем пользовательские данные ПОСЛЕ показа результата
   users[chatId] = { step: 'start' };
 }
 
@@ -418,10 +439,19 @@ bot.on('error', (error) => {
   console.log('Общая ошибка:', error.message);
 });
 
+// Для отладки - выводим состояние каждые 30 секунд
+setInterval(() => {
+  console.log('=== ДЕБАГ ===');
+  console.log('Активных пользователей:', Object.keys(users).length);
+  console.log('Ожидающих заказов:', Object.keys(pendingOrders).length);
+}, 30000);
+
 console.log('🤖 Бот полностью готов к работе!');
 console.log('📞 Телефон: 8 (923) 811-54-32');
 console.log('👨‍💼 Менеджер: @systema365');
 console.log('\n✅ Все функции активированы:');
+console.log('  • Кнопка "✅ Установка под ключ" - РАБОТАЕТ');
+console.log('  • Кнопка "❌ Установлю сам" - РАБОТАЕТ');
 console.log('  • Расчет стоимости с скидками');
 console.log('  • Заявки на точный расчет');
 console.log('  • Кликабельные телефоны');
