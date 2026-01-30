@@ -2,11 +2,17 @@
 const TelegramBot = require('node-telegram-bot-api');
 const token = process.env.TELEGRAM_TOKEN || 'ВАШ_ТОКЕН';
 const bot = new TelegramBot(token, { polling: true });
+
+// ⚠️ УБЕДИТЕСЬ, ЧТО УКАЗАЛИ ВЕРНЫЙ ADMIN_CHAT_ID!
+// Пример: 123456789 (цифры без кавычек)
+const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID || 'ВАШ_CHAT_ID';
+
 console.log('✅ Бот запущен!');
+console.log(`👑 ID администратора: ${ADMIN_CHAT_ID}`);
 
 // =========== ХРАНИЛИЩЕ ===========
-const users = {}; // chatId -> {step, width, height, automation, installation, orderData}
-const phoneRequests = {}; // chatId -> {waitingPhone: true, orderData}
+const users = {};
+const phoneRequests = {};
 
 // =========== КНОПКИ ===========
 const Keyboards = {
@@ -60,6 +66,9 @@ bot.onText(/\/start/, (msg) => {
 
 // =========== ОБРАБОТКА ВСЕХ СООБЩЕНИЙ ===========
 bot.on('message', (msg) => {
+  // Игнорируем служебные сообщения
+  if (msg.chat.type === 'channel') return;
+  
   const chatId = msg.chat.id;
   const text = msg.text;
   
@@ -267,6 +276,7 @@ function handlePhoneInput(chatId, phone, userInfo) {
   const request = phoneRequests[chatId];
   
   if (!request || !request.waitingPhone) {
+    bot.sendMessage(chatId, '❌ Ошибка обработки заявки. Пожалуйста, начните заново: /start');
     return;
   }
   
@@ -304,9 +314,23 @@ function handlePhoneInput(chatId, phone, userInfo) {
     ...confirmButtons
   });
   
-  // ====== ОТПРАВЛЯЕМ ПОЛНУЮ ЗАЯВКУ АДМИНУ ======
-  const adminChatId = process.env.ADMIN_CHAT_ID;
-  if (adminChatId) {
+  // ====== ОТПРАВЛЯЕМ ЗАЯВКУ АДМИНУ ======
+  sendToAdmin(chatId, phone, userInfo, order, requestId);
+  
+  // Очищаем данные пользователя
+  users[chatId] = { step: 'start' };
+}
+
+// =========== ФУНКЦИЯ ОТПРАВКИ АДМИНУ ===========
+function sendToAdmin(chatId, phone, userInfo, order, requestId) {
+  // Проверяем, указан ли ID админа
+  if (!ADMIN_CHAT_ID || ADMIN_CHAT_ID === 'ВАШ_CHAT_ID') {
+    console.log('❌ ADMIN_CHAT_ID не указан! Заявка не отправлена.');
+    console.log(`📝 Заявка #${requestId} от ${userInfo.first_name}: ${phone}`);
+    return;
+  }
+  
+  try {
     const adminMessage = 
       `🔥 *НОВАЯ ЗАЯВКА НА РАСЧЕТ #${requestId}*\n\n` +
       `👤 *Клиент:* ${userInfo.first_name}${userInfo.last_name ? ' ' + userInfo.last_name : ''}\n` +
@@ -326,28 +350,49 @@ function handlePhoneInput(chatId, phone, userInfo) {
     const adminKeyboard = {
       reply_markup: {
         inline_keyboard: [[
-          { text: '📞 Позвонить клиенту', url: `tel:${phone.replace(/\D/g, '')}` }
+          { 
+            text: '📞 Позвонить клиенту', 
+            url: `tel:${phone.replace(/\D/g, '').replace(/^8/, '7')}`
+          }
         ]]
       }
     };
     
-    bot.sendMessage(adminChatId, adminMessage, {
+    bot.sendMessage(ADMIN_CHAT_ID, adminMessage, {
       parse_mode: 'Markdown',
       ...adminKeyboard
     }).then(adminMsg => {
+      console.log(`✅ Заявка #${requestId} отправлена админу ${ADMIN_CHAT_ID}`);
+      
       // Сохраняем связь для ответов админа
       phoneRequests[chatId] = {
         adminMessageId: adminMsg.message_id,
         requestId: requestId,
         clientPhone: phone,
-        clientChatId: chatId
+        clientChatId: chatId,
+        timestamp: Date.now()
       };
+      
+      // Автоматическое напоминание через 5 минут
+      setTimeout(() => {
+        if (phoneRequests[chatId]) {
+          bot.sendMessage(ADMIN_CHAT_ID, 
+            `⏰ *НАПОМИНАНИЕ:* Заявка #${requestId} ждет ответа уже 5 минут\n📱 Телефон: ${phone}`,
+            { parse_mode: 'Markdown' }
+          );
+        }
+      }, 5 * 60 * 1000);
+      
+    }).catch(error => {
+      console.error('❌ Ошибка отправки админу:', error.message);
+      console.log('Проверьте:');
+      console.log('1. Правильный ли ADMIN_CHAT_ID?');
+      console.log('2. Бот добавлен в чат с админом?');
+      console.log('3. У бота есть права на отправку сообщений?');
     });
-  }
-  
-  // Очищаем данные пользователя
-  if (users[chatId]) {
-    users[chatId] = { step: 'start' };
+    
+  } catch (error) {
+    console.error('❌ Ошибка формирования заявки:', error);
   }
 }
 
@@ -367,10 +412,8 @@ bot.on('callback_query', (query) => {
 
 // =========== ОБРАБОТКА ОТВЕТОВ АДМИНА ===========
 bot.on('message', (msg) => {
-  const adminChatId = process.env.ADMIN_CHAT_ID;
-  
   // Проверяем если сообщение от админа и является ответом
-  if (adminChatId && msg.chat.id.toString() === adminChatId && msg.reply_to_message) {
+  if (msg.chat.id.toString() === ADMIN_CHAT_ID && msg.reply_to_message) {
     const repliedMsgId = msg.reply_to_message.message_id;
     
     // Ищем заявку по ID сообщения админа
@@ -412,25 +455,52 @@ bot.on('message', (msg) => {
         ...clientKeyboard
       }).then(() => {
         // Подтверждаем админу
-        bot.sendMessage(adminChatId, `✅ Ответ по заявке #${requestData.requestId} отправлен клиенту`, {
+        bot.sendMessage(ADMIN_CHAT_ID, `✅ Ответ по заявке #${requestData.requestId} отправлен клиенту`, {
           reply_to_message_id: msg.message_id
         });
+        
+        // Удаляем обработанную заявку
+        delete phoneRequests[targetChatId];
+      }).catch(error => {
+        console.error('❌ Ошибка отправки клиенту:', error.message);
+        bot.sendMessage(ADMIN_CHAT_ID, 
+          `❌ Не удалось отправить ответ клиенту #${requestData.requestId}\n${error.message}`,
+          { reply_to_message_id: msg.message_id }
+        );
       });
-      
-      // Удаляем обработанную заявку
-      delete phoneRequests[targetChatId];
     }
   }
 });
 
 // =========== ОШИБКИ ===========
 bot.on('polling_error', (error) => {
-  console.log('Ошибка:', error.message);
+  console.log('❌ Ошибка бота:', error.message);
+  if (error.code === 'ETELEGRAM') {
+    console.log('⚠️ Проблема с Telegram API');
+  }
+});
+
+// =========== КОМАНДА ДЛЯ ПРОВЕРКИ ===========
+bot.onText(/\/checkadmin/, (msg) => {
+  const chatId = msg.chat.id;
+  
+  if (ADMIN_CHAT_ID && ADMIN_CHAT_ID !== 'ВАШ_CHAT_ID') {
+    bot.sendMessage(chatId, `✅ Админ настроен:\nID: ${ADMIN_CHAT_ID}\n\nОтправляю тестовое сообщение...`);
+    
+    bot.sendMessage(ADMIN_CHAT_ID, 
+      '✅ Тестовое сообщение от бота\nЕсли вы это видите - заявки будут приходить!',
+      { parse_mode: 'Markdown' }
+    ).then(() => {
+      bot.sendMessage(chatId, '✅ Тестовое сообщение отправлено успешно!');
+    }).catch(error => {
+      bot.sendMessage(chatId, `❌ Ошибка отправки: ${error.message}`);
+    });
+  } else {
+    bot.sendMessage(chatId, '❌ ADMIN_CHAT_ID не указан!\n\nУкажите в коде:\nconst ADMIN_CHAT_ID = "ВАШ_ID_ЦИФРАМИ";');
+  }
 });
 
 console.log('🤖 Бот полностью готов к работе!');
 console.log('📞 Телефон для связи: 8 (923) 811-54-32');
 console.log('💬 Менеджер: @systema365');
-if (process.env.ADMIN_CHAT_ID) {
-  console.log('👑 Админ ID настроен, заявки будут приходить');
-}
+console.log('👑 Для проверки админа отправьте /checkadmin');
