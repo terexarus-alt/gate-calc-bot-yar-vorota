@@ -8,7 +8,7 @@ require('dotenv').config();
 
 // Проверяем обязательные переменные
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
-const MANAGER_USERNAME = process.env.MANAGER_USERNAME || '@gate_manager';
+const MANAGER_USERNAME = process.env.MANAGER_USERNAME;
 const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID; // ID админа для заявок
 const PHONE_NUMBER = process.env.PHONE_NUMBER || '8 (923) 811-54-32';
 
@@ -486,3 +486,4 @@ bot.on('polling_error', (error) => {
 // ============================================
 console.log('🤖 Бот готов к работе!');
 console.log('⏳ Ожидаю сообщений...');
+
