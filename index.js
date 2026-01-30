@@ -6,7 +6,7 @@ console.log('✅ Бот запущен!');
 
 // =========== ХРАНИЛИЩЕ ===========
 const users = {}; // chatId -> {step, width, height, automation, installation, orderData}
-const pendingRequests = {}; // chatId -> {phone, orderData, messageId}
+const phoneRequests = {}; // chatId -> {waitingPhone: true, orderData}
 
 // =========== КНОПКИ ===========
 const Keyboards = {
@@ -49,6 +49,7 @@ const Keyboards = {
 bot.onText(/\/start/, (msg) => {
   const chatId = msg.chat.id;
   users[chatId] = { step: 'start' };
+  delete phoneRequests[chatId];
   
   bot.sendMessage(
     chatId,
@@ -69,9 +70,17 @@ bot.on('message', (msg) => {
   
   const user = users[chatId];
   
-  // ====== ОБРАБОТКА ОТВЕТОВ НА ЗАПРОС ТЕЛЕФОНА ======
-  if (pendingRequests[chatId] && pendingRequests[chatId].waitingForPhone) {
+  // ====== ПРОВЕРЯЕМ СНАЧАЛА - ЖДЕМ ЛИ МЫ ТЕЛЕФОН? ======
+  if (phoneRequests[chatId] && phoneRequests[chatId].waitingPhone) {
     handlePhoneInput(chatId, text, msg.from);
+    return;
+  }
+  
+  // Кнопка "Сначала" всегда работает
+  if (text === '🔄 Сначала') {
+    users[chatId] = { step: 'start' };
+    delete phoneRequests[chatId];
+    bot.sendMessage(chatId, '🚀 Начать расчет?', Keyboards.main);
     return;
   }
   
@@ -96,9 +105,6 @@ bot.on('message', (msg) => {
         { parse_mode: 'Markdown' }
       );
       users[chatId] = { step: 'start' };
-    } else if (text === '🔄 Сначала') {
-      users[chatId] = { step: 'start' };
-      bot.sendMessage(chatId, '🚀 Начать расчет?', Keyboards.main);
     }
     return;
   }
@@ -196,7 +202,7 @@ bot.on('message', (msg) => {
   }
 });
 
-// =========== ПОКАЗ РЕЗУЛЬТАТА РАСЧЕТА ===========
+// =========== ПОКАЗ РЕЗУЛЬТАТА И ЗАПРОС ТЕЛЕФОНА ===========
 function showCalculationResult(chatId, user) {
   // Расчет
   const area = (user.width / 1000) * (user.height / 1000);
@@ -231,7 +237,7 @@ function showCalculationResult(chatId, user) {
   // Сохраняем у пользователя
   users[chatId].orderData = orderData;
   
-  // Формируем сообщение с результатом
+  // ПОКАЗЫВАЕМ РЕЗУЛЬТАТ И СРАЗУ ЗАПРАШИВАЕМ ТЕЛЕФОН
   const message = 
     `✅ *Предварительный расчет готов!*\n\n` +
     `📋 *Параметры заказа:*\n` +
@@ -241,98 +247,45 @@ function showCalculationResult(chatId, user) {
     `• Установка: ${user.installation ? 'Под ключ' : 'Сам'}\n\n` +
     `💰 *Примерная стоимость: ~${finalPrice.toLocaleString('ru-RU')} ₽*\n\n` +
     `📝 *Точную стоимость со всеми скидками укажет менеджер!*\n\n` +
-    `👇 *Укажите номер телефона, куда Вам позвонить?*`;
+    `👇 *Укажите номер, куда Вам позвонить?*\n` +
+    `_(просто напишите номер телефона)_`;
   
-  // Кнопки для запроса телефона
-  const phoneRequestButtons = {
-    reply_markup: {
-      inline_keyboard: [
-        [
-          { text: '📱 Отправить номер', callback_data: 'send_phone' }
-        ],
-        [
-          { text: '💬 Написать менеджеру', url: 'https://t.me/systema365' }
-        ]
-      ]
-    }
-  };
-  
+  // Отправляем сообщение
   bot.sendMessage(chatId, message, { 
-    parse_mode: 'Markdown', 
-    ...phoneRequestButtons 
+    parse_mode: 'Markdown' 
   });
+  
+  // Устанавливаем флаг что ждем телефон
+  phoneRequests[chatId] = {
+    waitingPhone: true,
+    orderData: orderData
+  };
 }
-
-// =========== ОБРАБОТКА ИНЛАЙН-КНОПОК ===========
-bot.on('callback_query', (query) => {
-  const chatId = query.message.chat.id;
-  const data = query.data;
-  const userData = users[chatId];
-  
-  if (data === 'send_phone') {
-    // Проверяем есть ли расчет
-    if (!userData || !userData.orderData) {
-      bot.sendMessage(chatId, '❌ Расчет не найден. Начните заново.');
-      return;
-    }
-    
-    // Сохраняем что ждем телефон
-    pendingRequests[chatId] = {
-      waitingForPhone: true,
-      orderData: userData.orderData,
-      messageId: query.message.message_id
-    };
-    
-    // Запрашиваем телефон
-    bot.sendMessage(
-      chatId,
-      `📱 *Укажите ваш номер телефона:*\n\n` +
-      `_Пример: 8 999 123-45-67 или +7 999 123-45-67_\n\n` +
-      `Менеджер @systema365 свяжется для уточнения деталей и расчета точной стоимости.`,
-      {
-        parse_mode: 'Markdown',
-        reply_markup: {
-          force_reply: true,
-          selective: true,
-          input_field_placeholder: 'Ваш номер телефона'
-        }
-      }
-    );
-    
-  } else if (data === 'new_calculation') {
-    users[chatId] = { step: 'start' };
-    delete pendingRequests[chatId];
-    bot.sendMessage(chatId, '🚀 Начать новый расчет?', Keyboards.main);
-  }
-  
-  bot.answerCallbackQuery(query.id);
-});
 
 // =========== ОБРАБОТКА ВВОДА ТЕЛЕФОНА ===========
 function handlePhoneInput(chatId, phone, userInfo) {
-  const request = pendingRequests[chatId];
+  const request = phoneRequests[chatId];
   
-  if (!request || !request.waitingForPhone) {
+  if (!request || !request.waitingPhone) {
     return;
   }
   
   const order = request.orderData;
   const requestId = 'REQ-' + Date.now().toString().slice(-6);
   
-  // Удаляем флаг ожидания
-  delete pendingRequests[chatId].waitingForPhone;
+  // Убираем флаг ожидания
+  delete phoneRequests[chatId];
   
-  // Показываем подтверждение клиенту
-  const confirmationMessage = 
-    `📨 *Заявка #${requestId} отправлена!*\n\n` +
+  // ПОДТВЕРЖДЕНИЕ КЛИЕНТУ
+  const confirmMsg = 
+    `📨 *Спасибо! Ваша заявка #${requestId} принята!*\n\n` +
     `✅ Ваш номер: ${phone}\n` +
-    `✅ Параметры заказа сохранены\n\n` +
     `⏱️ *Менеджер @systema365 свяжется в течение 15 минут*\n\n` +
     `📞 *Также вы можете позвонить:*\n` +
     `8 (923) 811-54-32\n\n` +
-    `💬 *Быстрая связь:*`;
+    `👇 *Быстрая связь:*`;
   
-  const confirmationButtons = {
+  const confirmButtons = {
     reply_markup: {
       inline_keyboard: [
         [
@@ -340,18 +293,18 @@ function handlePhoneInput(chatId, phone, userInfo) {
           { text: '📞 Позвонить', url: 'tel:89238115432' }
         ],
         [
-          { text: '🔄 Новый расчет', callback_data: 'new_calculation' }
+          { text: '🔄 Новый расчет', callback_data: 'new_calc' }
         ]
       ]
     }
   };
   
-  bot.sendMessage(chatId, confirmationMessage, {
+  bot.sendMessage(chatId, confirmMsg, {
     parse_mode: 'Markdown',
-    ...confirmationButtons
+    ...confirmButtons
   });
   
-  // Отправляем заявку админу (если настроен)
+  // ====== ОТПРАВЛЯЕМ ПОЛНУЮ ЗАЯВКУ АДМИНУ ======
   const adminChatId = process.env.ADMIN_CHAT_ID;
   if (adminChatId) {
     const adminMessage = 
@@ -359,13 +312,13 @@ function handlePhoneInput(chatId, phone, userInfo) {
       `👤 *Клиент:* ${userInfo.first_name}${userInfo.last_name ? ' ' + userInfo.last_name : ''}\n` +
       `👤 Username: @${userInfo.username || 'нет'}\n` +
       `🆔 ID: ${chatId}\n` +
-      `📱 Телефон: ${phone}\n` +
+      `📱 *Телефон:* ${phone}\n` +
       `📅 Время: ${new Date().toLocaleString('ru-RU')}\n\n` +
-      `📏 *ПАРАМЕТРЫ ЗАКАЗА:*\n` +
+      `📏 *ПОЛНЫЕ ПАРАМЕТРЫ ЗАКАЗА:*\n` +
       `• Ширина: ${order.width} мм\n` +
       `• Высота: ${order.height} мм\n` +
-      `• Автоматика: ${order.automation ? 'Да' : 'Нет'}\n` +
-      `• Установка: ${order.installation ? 'Под ключ' : 'Сам'}\n` +
+      `• Автоматика: ${order.automation ? '✅ Да (с пультом)' : '❌ Нет (ручное)'}\n` +
+      `• Установка: ${order.installation ? '✅ Под ключ' : '❌ Сам'}\n` +
       `• Площадь: ${order.area} м²\n` +
       `💰 *Примерная стоимость:* ~${order.finalPrice.toLocaleString('ru-RU')} ₽\n\n` +
       `💬 *Для ответа клиенту ответьте на это сообщение*`;
@@ -383,22 +336,40 @@ function handlePhoneInput(chatId, phone, userInfo) {
       ...adminKeyboard
     }).then(adminMsg => {
       // Сохраняем связь для ответов админа
-      pendingRequests[chatId].adminMessageId = adminMsg.message_id;
-      pendingRequests[chatId].requestId = requestId;
-      pendingRequests[chatId].clientPhone = phone;
+      phoneRequests[chatId] = {
+        adminMessageId: adminMsg.message_id,
+        requestId: requestId,
+        clientPhone: phone,
+        clientChatId: chatId
+      };
     });
   }
   
-  // Очищаем данные расчета у пользователя
+  // Очищаем данные пользователя
   if (users[chatId]) {
-    delete users[chatId].orderData;
+    users[chatId] = { step: 'start' };
   }
 }
 
+// =========== ОБРАБОТКА ИНЛАЙН-КНОПОК ===========
+bot.on('callback_query', (query) => {
+  const chatId = query.message.chat.id;
+  const data = query.data;
+  
+  if (data === 'new_calc') {
+    users[chatId] = { step: 'start' };
+    delete phoneRequests[chatId];
+    bot.sendMessage(chatId, '🚀 Начать новый расчет?', Keyboards.main);
+  }
+  
+  bot.answerCallbackQuery(query.id);
+});
+
 // =========== ОБРАБОТКА ОТВЕТОВ АДМИНА ===========
 bot.on('message', (msg) => {
-  // Проверяем если сообщение от админа и является ответом
   const adminChatId = process.env.ADMIN_CHAT_ID;
+  
+  // Проверяем если сообщение от админа и является ответом
   if (adminChatId && msg.chat.id.toString() === adminChatId && msg.reply_to_message) {
     const repliedMsgId = msg.reply_to_message.message_id;
     
@@ -406,7 +377,7 @@ bot.on('message', (msg) => {
     let targetChatId = null;
     let requestData = null;
     
-    for (const [chatId, request] of Object.entries(pendingRequests)) {
+    for (const [chatId, request] of Object.entries(phoneRequests)) {
       if (request.adminMessageId === repliedMsgId) {
         targetChatId = chatId;
         requestData = request;
@@ -447,7 +418,7 @@ bot.on('message', (msg) => {
       });
       
       // Удаляем обработанную заявку
-      delete pendingRequests[targetChatId];
+      delete phoneRequests[targetChatId];
     }
   }
 });
@@ -457,13 +428,9 @@ bot.on('polling_error', (error) => {
   console.log('Ошибка:', error.message);
 });
 
-console.log('🤖 Бот готов к работе!');
-console.log('📞 Телефон: 8 (923) 811-54-32');
+console.log('🤖 Бот полностью готов к работе!');
+console.log('📞 Телефон для связи: 8 (923) 811-54-32');
 console.log('💬 Менеджер: @systema365');
-console.log('\n✅ Функционал:');
-console.log('  • Кнопка "✅ Установка под ключ" - РАБОТАЕТ ✅');
-console.log('  • Кнопка "❌ Установлю сам" - РАБОТАЕТ ✅');
-console.log('  • Предварительный расчет с текстом');
-console.log('  • Запрос телефона клиента');
-console.log('  • Заявки админу с ответами');
-console.log('  • Кнопка "Начать сначала" везде');
+if (process.env.ADMIN_CHAT_ID) {
+  console.log('👑 Админ ID настроен, заявки будут приходить');
+}
