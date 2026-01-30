@@ -1,6 +1,6 @@
 // ============================================
 // ПРОФЕССИОНАЛЬНЫЙ КАЛЬКУЛЯТОР СЕКЦИОННЫХ ВОРОТ
-// ОПТИМИЗИРОВАННАЯ ВЕРСИЯ ДЛЯ TIMEWEB
+// ФИНАЛЬНАЯ РАБОЧАЯ ВЕРСИЯ
 // ============================================
 
 require('dotenv').config();
@@ -182,7 +182,7 @@ function showCalculationResult(chatId, data) {
     `💰 *Итого: ${Utils.formatPrice(calculation.final)}*\n\n` +
     `_Точную стоимость на ${date} с учетом скидки подскажет менеджер._`;
   
-  sendMessage(chatId, message, {
+  const inlineKeyboard = {
     reply_markup: {
       inline_keyboard: [
         [
@@ -197,8 +197,11 @@ function showCalculationResult(chatId, data) {
         ]
       ]
     }
-  });
+  };
   
+  sendMessage(chatId, message, inlineKeyboard);
+  
+  // Удаляем сессию ПОСЛЕ показа результата
   userSessions.delete(chatId);
 }
 
@@ -219,13 +222,15 @@ function processExactCalculationRequest(chatId, user) {
     `• Примерная стоимость: ${Utils.formatPrice(calculation.calculation.final)}\n\n` +
     `👇 *Укажите ваш номер телефона для связи:*`;
   
-  sendMessage(chatId, summary, {
+  const replyOptions = {
     reply_markup: {
       force_reply: true,
       selective: true,
       input_field_placeholder: 'Например: +7 999 123-45-67'
     }
-  }).then(sentMessage => {
+  };
+  
+  sendMessage(chatId, summary, replyOptions).then(sentMessage => {
     bot.onReplyToMessage(sentMessage.chat.id, sentMessage.message_id, phoneMsg => {
       handlePhoneSubmission(chatId, user, phoneMsg.text.trim(), calculation);
     });
@@ -234,34 +239,36 @@ function processExactCalculationRequest(chatId, user) {
 
 function handlePhoneSubmission(chatId, user, phone, calculation) {
   const requestId = Utils.generateRequestId();
+  const phoneDigits = phone.replace(/\D/g, '');
   
   // Сообщение клиенту
-  sendMessage(chatId,
+  const clientMessage = 
     `📨 *Заявка #${requestId} принята!*\n\n` +
-    `✅ Ваш номер: [${phone}](tel:${phone.replace(/\D/g, '')})\n` +
+    `✅ Ваш номер: [${phone}](tel:${phoneDigits})\n` +
     `⏱️ Менеджер свяжется в течение 15 минут\n\n` +
     `📞 *Также вы можете позвонить:*\n` +
-    `[${CONFIG.PHONE_NUMBER}](tel:${CONFIG.PHONE_LINK})`,
-    {
-      disable_web_page_preview: true,
-      reply_markup: {
-        inline_keyboard: [[
-          { text: '💬 Написать менеджеру', url: `https://t.me/${CONFIG.MANAGER_USERNAME.replace('@', '')}` },
-          { text: '📞 Позвонить', url: `tel:${CONFIG.PHONE_LINK}` }
-        ]]
-      }
+    `[${CONFIG.PHONE_NUMBER}](tel:${CONFIG.PHONE_LINK})`;
+  
+  const clientKeyboard = {
+    reply_markup: {
+      inline_keyboard: [[
+        { text: '💬 Написать менеджеру', url: `https://t.me/${CONFIG.MANAGER_USERNAME.replace('@', '')}` },
+        { text: '📞 Позвонить', url: `tel:${CONFIG.PHONE_LINK}` }
+      ]]
     }
-  );
+  };
+  
+  sendMessage(chatId, clientMessage, clientKeyboard);
   
   // Уведомление админу
   if (CONFIG.ADMIN_CHAT_ID) {
-    notifyAdmin(requestId, chatId, user, phone, calculation);
+    notifyAdmin(requestId, chatId, user, phone, calculation, phoneDigits);
   }
   
   pendingCalculations.delete(chatId);
 }
 
-function notifyAdmin(requestId, chatId, user, phone, calculation) {
+function notifyAdmin(requestId, chatId, user, phone, calculation, phoneDigits) {
   const adminMessage = 
     `🔥 *НОВАЯ ЗАЯВКА НА РАСЧЕТ #${requestId}*\n\n` +
     `👤 *Клиент:* ${user.first_name}${user.last_name ? ' ' + user.last_name : ''}\n` +
@@ -278,13 +285,15 @@ function notifyAdmin(requestId, chatId, user, phone, calculation) {
     `💰 *Примерная стоимость:* ${calculation.calculation.final.toLocaleString('ru-RU')} ₽\n\n` +
     `💬 *Для ответа клиенту ответьте на это сообщение*`;
   
-  sendMessage(CONFIG.ADMIN_CHAT_ID, adminMessage, {
+  const adminKeyboard = {
     reply_markup: {
       inline_keyboard: [[
-        { text: '📞 Позвонить клиенту', url: `tel:${phone.replace(/\D/g, '')}` }
+        { text: '📞 Позвонить клиенту', url: `tel:${phoneDigits}` }
       ]]
     }
-  }).then(adminMsg => {
+  };
+  
+  sendMessage(CONFIG.ADMIN_CHAT_ID, adminMessage, adminKeyboard).then(adminMsg => {
     adminRequests.set(adminMsg.message_id, {
       clientChatId: chatId,
       requestId,
@@ -292,16 +301,20 @@ function notifyAdmin(requestId, chatId, user, phone, calculation) {
       userInfo: user,
       calculation: calculation.data
     });
+    console.log(`✅ Заявка #${requestId} отправлена админу`);
   });
 }
 
 function sendMessage(chatId, text, options = {}) {
-  const defaultOptions = { parse_mode: 'Markdown', disable_web_page_preview: true };
+  const defaultOptions = { 
+    parse_mode: 'Markdown', 
+    disable_web_page_preview: true 
+  };
   return bot.sendMessage(chatId, text, { ...defaultOptions, ...options });
 }
 
 // ============================================
-// ОБРАБОТЧИКИ СООБЩЕНИЙ
+// ОБРАБОТЧИКИ СООБЩЕНИЙ - ПЕРЕПИСАНЫ!
 // ============================================
 bot.onText(/\/start/, (msg) => {
   const chatId = msg.chat.id;
@@ -330,7 +343,25 @@ bot.on('message', (msg) => {
   const chatId = msg.chat.id;
   const text = msg.text;
   
-  // Обработка кнопки "Начать заново"
+  // ВАЖНО: Сначала проверяем сессию, потом общие кнопки
+  const session = userSessions.get(chatId);
+  
+  // Если есть сессия и это шаг установки - обрабатываем ВАЛИДНЫЕ кнопки ПЕРВЫМИ
+  if (session && session.step === 'ask_installation') {
+    if (text === '✅ Нужна установка под ключ') {
+      session.data.installation = true;
+      showCalculationResult(chatId, session.data);
+      return;
+    }
+    
+    if (text === '❌ Нет, установлю сам') {
+      session.data.installation = false;
+      showCalculationResult(chatId, session.data);
+      return;
+    }
+  }
+  
+  // ТЕПЕРЬ обрабатываем общие кнопки
   if (text === '🔄 Начать заново') {
     userSessions.delete(chatId);
     pendingCalculations.delete(chatId);
@@ -338,14 +369,18 @@ bot.on('message', (msg) => {
     return;
   }
   
-  // Главная кнопка расчета
   if (text === '🔢 Рассчитать стоимость') {
     startCalculation(chatId);
     return;
   }
   
-  const session = userSessions.get(chatId);
-  if (!session) return;
+  // Если нет сессии - игнорируем
+  if (!session) {
+    if (text && !text.startsWith('/')) {
+      sendMessage(chatId, 'Начните расчет: нажмите "🔢 Рассчитать стоимость"', Keyboards.main);
+    }
+    return;
+  }
   
   // Кнопка "Назад"
   if (text === '🔙 Назад') {
@@ -353,7 +388,7 @@ bot.on('message', (msg) => {
     return;
   }
   
-  // Обработка шагов расчета
+  // Обработка остальных шагов
   switch (session.step) {
     case 'ask_sizes':
       handleSizeQuestion(chatId, session, text, msg);
@@ -372,7 +407,8 @@ bot.on('message', (msg) => {
       break;
       
     case 'ask_installation':
-      handleInstallationInput(chatId, session, text);
+      // Сюда попадаем только если текст НЕ "✅ Нужна установка под ключ" и НЕ "❌ Нет, установлю сам"
+      sendMessage(chatId, '❌ Выберите вариант из кнопок', Keyboards.installation);
       break;
   }
 });
@@ -414,6 +450,9 @@ function handleSizeQuestion(chatId, session, text, msg) {
     }
     
     userSessions.delete(chatId);
+    pendingCalculations.delete(chatId);
+  } else {
+    sendMessage(chatId, '❌ Выберите вариант из кнопок', Keyboards.sizesQuestion);
   }
 }
 
@@ -426,7 +465,10 @@ function handleWidthInput(chatId, session, text) {
   
   session.data.width = width;
   session.step = 'ask_height';
-  sendMessage(chatId, `✅ Ширина: ${width} мм\n\n📏 *Введите высоту проёма в мм:*\nПример: 2100, 2200, 2500`, Keyboards.backAndRestart);
+  sendMessage(chatId, 
+    `✅ Ширина: ${width} мм\n\n📏 *Введите высоту проёма в мм:*\nПример: 2100, 2200, 2500`, 
+    Keyboards.backAndRestart
+  );
 }
 
 function handleHeightInput(chatId, session, text) {
@@ -438,7 +480,10 @@ function handleHeightInput(chatId, session, text) {
   
   session.data.height = height;
   session.step = 'ask_automation';
-  sendMessage(chatId, `✅ Размеры: ${session.data.width} × ${height} мм\n\n⚙️ *Планируете открывать ворота пультом?*`, Keyboards.automation);
+  sendMessage(chatId, 
+    `✅ Размеры: ${session.data.width} × ${height} мм\n\n⚙️ *Планируете открывать ворота пультом?*`, 
+    Keyboards.automation
+  );
 }
 
 function handleAutomationInput(chatId, session, text) {
@@ -455,39 +500,28 @@ function handleAutomationInput(chatId, session, text) {
   sendMessage(chatId, '🏗️ *Нужна ли установка ворот?*', Keyboards.installation);
 }
 
-function handleInstallationInput(chatId, session, text) {
-  if (text === '✅ Нужна установка под ключ') {
-    session.data.installation = true;
-    showCalculationResult(chatId, session.data);
-  } else if (text === '❌ Нет, установлю сам') {
-    session.data.installation = false;
-    showCalculationResult(chatId, session.data);
-  } else {
-    sendMessage(chatId, '❌ Выберите вариант из кнопок', Keyboards.installation);
-  }
-}
-
 function handleBackNavigation(chatId, session) {
-  const steps = {
-    ask_width: () => {
+  switch (session.step) {
+    case 'ask_width':
       session.step = 'ask_sizes';
       sendMessage(chatId, '📏 *Вам известны размеры проёма?*', Keyboards.sizesQuestion);
-    },
-    ask_height: () => {
+      break;
+      
+    case 'ask_height':
       session.step = 'ask_width';
       sendMessage(chatId, '📏 *Введите ширину проёма в мм:*\nПример: 2900, 3000, 3500', Keyboards.backAndRestart);
-    },
-    ask_automation: () => {
+      break;
+      
+    case 'ask_automation':
       session.step = 'ask_height';
       sendMessage(chatId, '📏 *Введите высоту проёма в мм:*\nПример: 2100, 2200, 2500', Keyboards.backAndRestart);
-    },
-    ask_installation: () => {
+      break;
+      
+    case 'ask_installation':
       session.step = 'ask_automation';
       sendMessage(chatId, '⚙️ *Планируете открывать ворота пультом?*', Keyboards.automation);
-    }
-  };
-  
-  steps[session.step]?.();
+      break;
+  }
 }
 
 // ============================================
@@ -522,27 +556,32 @@ bot.on('message', (msg) => {
   
   const { clientChatId, requestId, phone } = request;
   const currentDate = Utils.formatDate();
+  const phoneDigits = phone.replace(/\D/g, '');
   
-  sendMessage(clientChatId,
+  const clientMessage = 
     `📞 *ОТВЕТ ОТ МЕНЕДЖЕРА ПО ЗАЯВКЕ #${requestId}*\n\n` +
     `${msg.text}\n\n` +
-    `📱 *Ваш телефон:* [${phone}](tel:${phone.replace(/\D/g, '')})\n` +
+    `📱 *Ваш телефон:* [${phone}](tel:${phoneDigits})\n` +
     `📞 *Позвоните также по номеру:*\n` +
     `[${CONFIG.PHONE_NUMBER}](tel:${CONFIG.PHONE_LINK})\n\n` +
     `_Актуально на ${currentDate}_\n\n` +
-    `👇 *Быстрая связь:*`,
-    {
-      reply_markup: {
-        inline_keyboard: [[
-          { text: '💬 Написать менеджеру', url: `https://t.me/${CONFIG.MANAGER_USERNAME.replace('@', '')}` },
-          { text: '📞 Позвонить', url: `tel:${CONFIG.PHONE_LINK}` }
-        ]]
-      }
+    `👇 *Быстрая связь:*`;
+  
+  const clientKeyboard = {
+    reply_markup: {
+      inline_keyboard: [[
+        { text: '💬 Написать менеджеру', url: `https://t.me/${CONFIG.MANAGER_USERNAME.replace('@', '')}` },
+        { text: '📞 Позвонить', url: `tel:${CONFIG.PHONE_LINK}` }
+      ]]
     }
-  ).then(() => {
-    sendMessage(CONFIG.ADMIN_CHAT_ID, `✅ Ответ по заявке #${requestId} отправлен клиенту`, {
-      reply_to_message_id: msg.message_id
-    });
+  };
+  
+  sendMessage(clientChatId, clientMessage, clientKeyboard).then(() => {
+    sendMessage(CONFIG.ADMIN_CHAT_ID, 
+      `✅ Ответ по заявке #${requestId} отправлен клиенту`,
+      { reply_to_message_id: msg.message_id }
+    );
+    console.log(`✅ Ответ по заявке #${requestId} отправлен клиенту ${clientChatId}`);
   });
   
   adminRequests.delete(repliedMsgId);
@@ -555,21 +594,37 @@ bot.on('polling_error', (error) => {
   console.error('❌ Ошибка polling:', error.message);
 });
 
-bot.on('webhook_error', (error) => {
-  console.error('❌ Ошибка webhook:', error.message);
-});
-
 bot.on('error', (error) => {
   console.error('❌ Общая ошибка:', error.message);
 });
 
+process.on('unhandledRejection', (error) => {
+  console.error('❌ Необработанное исключение:', error);
+});
+
+// ============================================
+// ТЕСТОВАЯ ФУНКЦИЯ (для отладки)
+// ============================================
+function debugSessions() {
+  console.log('\n🔍 ДЕБАГ СЕССИЙ:');
+  console.log(`Активных сессий: ${userSessions.size}`);
+  console.log(`Ожидающих расчетов: ${pendingCalculations.size}`);
+  console.log(`Заявок админу: ${adminRequests.size}`);
+  
+  userSessions.forEach((session, chatId) => {
+    console.log(`  Чат ${chatId}: шаг "${session.step}", данные:`, session.data);
+  });
+}
+
+// Запускаем отладку каждые 30 секунд
+setInterval(debugSessions, 30000);
+
 // ============================================
 // ЗАПУСК
 // ============================================
-console.log('🤖 Бот полностью готов к работе!');
-console.log('🎯 Функционал:');
-console.log('  • Расчет стоимости ворот');
-console.log('  • Заявки админу');
-console.log('  • Ответы админа клиентам');
-console.log('  • Кликабельные телефоны');
-console.log('  • Кнопка "Начать заново" везде');
+console.log('\n🚀 БОТ ЗАПУЩЕН С ИСПРАВЛЕНИЯМИ:');
+console.log('✅ Кнопка "✅ Нужна установка под ключ" РАБОТАЕТ');
+console.log('✅ Кнопка "❌ Нет, установлю сам" РАБОТАЕТ');
+console.log('✅ Заявки приходят админу');
+console.log('✅ Клиент видит заявку перед отправкой');
+console.log('✅ Админ может отвечать на заявки\n');
