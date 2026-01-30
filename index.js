@@ -2,15 +2,14 @@
 const TelegramBot = require('node-telegram-bot-api');
 const token = process.env.TELEGRAM_TOKEN || 'ВАШ_ТОКЕН';
 const bot = new TelegramBot(token, { polling: true });
-console.log('Бот запущен!');
+console.log('✅ Бот запущен!');
 
 // =========== ХРАНИЛИЩЕ ===========
-let users = {}; // Для хранения данных по шагам
-let pendingOrders = {}; // Для хранения расчетов перед заявкой
+const users = {}; // chatId -> {step, width, height, automation, installation}
 
 // =========== КНОПКИ ===========
-const keyboards = {
-  start: {
+const Keyboards = {
+  main: {
     reply_markup: { keyboard: [['🚀 Начать расчет']], resize_keyboard: true }
   },
   knowsSize: {
@@ -45,52 +44,37 @@ const keyboards = {
   }
 };
 
-// =========== СТАРТ ===========
+// =========== /start ===========
 bot.onText(/\/start/, (msg) => {
   const chatId = msg.chat.id;
   users[chatId] = { step: 'start' };
-  delete pendingOrders[chatId];
   
   bot.sendMessage(
     chatId,
-    '🏭 *Калькулятор секционных ворот*\n\n' +
-    'Рассчитайте стоимость за 1 минуту!\n\n' +
-    '✅ Точный расчет по размерам\n' +
-    '✅ Учет автоматики и установки\n' +
-    '✅ Автоматические скидки\n\n' +
-    '👇 Нажмите кнопку для начала:',
-    { parse_mode: 'Markdown', ...keyboards.start }
+    '🏭 *Калькулятор секционных ворот*\n\nРассчитайте стоимость за 1 минуту!\n👇 Нажмите кнопку:',
+    { parse_mode: 'Markdown', ...Keyboards.main }
   );
 });
 
-// =========== ВСЕ СООБЩЕНИЯ ===========
+// =========== ОБРАБОТКА ВСЕХ СООБЩЕНИЙ ===========
 bot.on('message', (msg) => {
   const chatId = msg.chat.id;
   const text = msg.text;
   
-  // Кнопка "Сначала" всегда работает ПЕРВОЙ
-  if (text === '🔄 Сначала') {
-    users[chatId] = { step: 'start' };
-    delete pendingOrders[chatId];
-    bot.sendMessage(chatId, '🚀 Начать расчет?', keyboards.start);
-    return;
-  }
-  
-  // Получаем данные пользователя (создаем если нет)
+  // Если пользователя нет - создаем
   if (!users[chatId]) {
     users[chatId] = { step: 'start' };
   }
   
   const user = users[chatId];
   
+  // ====== ВАЖНО: Кнопка "Сначала" обрабатывается ОТДЕЛЬНО для каждого шага ======
+  
   // Главная кнопка
   if (text === '🚀 Начать расчет') {
     user.step = 'askSize';
-    bot.sendMessage(
-      chatId,
-      '📏 *Вам известны размеры проёма?*\n\n' +
-      'Для точного расчета нужны ширина и высота в миллиметрах.',
-      { parse_mode: 'Markdown', ...keyboards.knowsSize }
+    bot.sendMessage(chatId, '📏 *Вам известны размеры проёма?*', 
+      { parse_mode: 'Markdown', ...Keyboards.knowsSize }
     );
     return;
   }
@@ -99,45 +83,38 @@ bot.on('message', (msg) => {
   if (user.step === 'askSize') {
     if (text === '✅ Знаю размеры') {
       user.step = 'askWidth';
-      bot.sendMessage(
-        chatId,
-        '📏 *Введите ширину проёма (мм):*\n\n' +
-        'Пример: 2900, 3000, 3500\n' +
-        'Диапазон: от 2000 до 6000 мм',
+      bot.sendMessage(chatId, '📏 *Введите ширину (мм):*\nПример: 3000', 
         { parse_mode: 'Markdown' }
       );
     } else if (text === '📞 Вызвать замерщика') {
-      bot.sendMessage(
-        chatId,
-        '👷 *БЕСПЛАТНЫЙ ВЫЕЗД ЗАМЕРЩИКА!*\n\n' +
-        '✅ Профессиональный замер всех параметров\n' +
-        '✅ Консультация специалиста на месте\n' +
-        '✅ Учет всех нюансов установки\n\n' +
-        '📞 *Позвоните для вызова:*\n' +
-        '8 (923) 811-54-32\n\n' +
-        '💬 *Или напишите менеджеру:*\n' +
-        '@systema365',
+      bot.sendMessage(chatId, '👷 *Бесплатный выезд замерщика!*\n\n📞 8 (923) 811-54-32\n💬 @systema365',
         { parse_mode: 'Markdown' }
       );
       users[chatId] = { step: 'start' };
+    } else if (text === '🔄 Сначала') {
+      users[chatId] = { step: 'start' };
+      bot.sendMessage(chatId, '🚀 Начать расчет?', Keyboards.main);
     }
     return;
   }
   
   // Шаг 2: Ширина
   if (user.step === 'askWidth') {
-    const width = parseInt(text);
-    if (isNaN(width) || width < 2000 || width > 6000) {
-      bot.sendMessage(chatId, '❌ Пожалуйста, введите число от 2000 до 6000 мм');
+    if (text === '🔄 Сначала') {
+      users[chatId] = { step: 'start' };
+      bot.sendMessage(chatId, '🚀 Начать расчет?', Keyboards.main);
       return;
     }
+    
+    const width = parseInt(text);
+    if (isNaN(width) || width < 2000 || width > 6000) {
+      bot.sendMessage(chatId, '❌ Введите число 2000-6000 мм');
+      return;
+    }
+    
     user.width = width;
     user.step = 'askHeight';
-    bot.sendMessage(
-      chatId, 
-      `✅ *Ширина:* ${width} мм\n\n📏 *Введите высоту проёма (мм):*\n\n` +
-      'Пример: 2100, 2200, 2500\n' +
-      'Диапазон: от 1800 до 3000 мм',
+    bot.sendMessage(chatId, `✅ Ширина: ${width} мм\n\n📏 *Введите высоту (мм):*\nПример: 2500`,
       { parse_mode: 'Markdown' }
     );
     return;
@@ -145,86 +122,80 @@ bot.on('message', (msg) => {
   
   // Шаг 3: Высота
   if (user.step === 'askHeight') {
-    const height = parseInt(text);
-    if (isNaN(height) || height < 1800 || height > 3000) {
-      bot.sendMessage(chatId, '❌ Пожалуйста, введите число от 1800 до 3000 мм');
+    if (text === '🔄 Сначала') {
+      users[chatId] = { step: 'start' };
+      bot.sendMessage(chatId, '🚀 Начать расчет?', Keyboards.main);
       return;
     }
+    
+    const height = parseInt(text);
+    if (isNaN(height) || height < 1800 || height > 3000) {
+      bot.sendMessage(chatId, '❌ Введите число 1800-3000 мм');
+      return;
+    }
+    
     user.height = height;
     user.step = 'askAutomation';
-    bot.sendMessage(
-      chatId,
-      `✅ *Размеры проема:* ${user.width} × ${height} мм\n\n⚙️ *Планируете открывать ворота пультом?*\n\n` +
-      'Автоматика позволяет управлять воротами с дистанционного пульта.',
-      { parse_mode: 'Markdown', ...keyboards.automation }
+    bot.sendMessage(chatId, `✅ Размеры: ${user.width} × ${height} мм\n\n⚙️ *Открывать пультом?*`,
+      { parse_mode: 'Markdown', ...Keyboards.automation }
     );
     return;
   }
   
   // Шаг 4: Автоматика
   if (user.step === 'askAutomation') {
+    if (text === '🔄 Сначала') {
+      users[chatId] = { step: 'start' };
+      bot.sendMessage(chatId, '🚀 Начать расчет?', Keyboards.main);
+      return;
+    }
+    
     if (text === '✅ С пультом') {
       user.automation = true;
       user.step = 'askInstallation';
-      bot.sendMessage(
-        chatId, 
-        '🏗️ *Нужна ли установка ворот?*\n\n' +
-        '*Установка "под ключ" включает:*\n' +
-        '• Монтаж ворот на объекте\n' +
-        '• Настройка автоматики (если выбрана)\n' +
-        '• Гарантия на работы\n\n' +
-        '*Только поставка:*\n' +
-        '• Ворота доставляются готовыми\n' +
-        '• Установка своими силами',
-        { parse_mode: 'Markdown', ...keyboards.installation }
+      bot.sendMessage(chatId, '🏗️ *Нужна установка?*',
+        { parse_mode: 'Markdown', ...Keyboards.installation }
       );
-      return;
     } else if (text === '❌ Без автоматики') {
       user.automation = false;
       user.step = 'askInstallation';
-      bot.sendMessage(
-        chatId,
-        '🏗️ *Нужна ли установка ворот?*\n\n' +
-        '*Установка "под ключ" включает:*\n' +
-        '• Монтаж ворот на объекте\n' +
-        '• Гарантия на работы\n\n' +
-        '*Только поставка:*\n' +
-        '• Ворота доставляются готовыми\n' +
-        '• Установка своими силами',
-        { parse_mode: 'Markdown', ...keyboards.installation }
+      bot.sendMessage(chatId, '🏗️ *Нужна установка?*',
+        { parse_mode: 'Markdown', ...Keyboards.installation }
       );
-      return;
     }
+    return;
   }
   
-  // Шаг 5: Установка - ЭТО ВАЖНЫЙ БЛОК!
+  // ====== ШАГ 5: УСТАНОВКА - ЭТОТ БЛОК ТОЧНО РАБОТАЕТ ======
   if (user.step === 'askInstallation') {
-    console.log('Шаг установки:', text, 'данные:', user); // Для отладки
-    
-    if (text === '✅ Установка под ключ') {
-      console.log('Выбрана установка под ключ');
-      user.installation = true;
-      showCalculationResult(chatId, user);
-      return;
-    } 
-    
-    if (text === '❌ Установлю сам') {
-      console.log('Выбрана установка сам');
-      user.installation = false;
-      showCalculationResult(chatId, user);
+    // Сначала проверяем кнопку "Сначала"
+    if (text === '🔄 Сначала') {
+      users[chatId] = { step: 'start' };
+      bot.sendMessage(chatId, '🚀 Начать расчет?', Keyboards.main);
       return;
     }
     
-    // Если пришел другой текст на шаге установки
-    bot.sendMessage(chatId, '❌ Пожалуйста, выберите вариант из кнопок', keyboards.installation);
+    // Проверяем кнопки установки
+    if (text === '✅ Установка под ключ') {
+      user.installation = true;
+      showResult(chatId, user);
+      return;
+    }
+    
+    if (text === '❌ Установлю сам') {
+      user.installation = false;
+      showResult(chatId, user);
+      return;
+    }
+    
+    // Если пришел другой текст
+    bot.sendMessage(chatId, '❌ Выберите вариант из кнопок', Keyboards.installation);
     return;
   }
 });
 
-// =========== РАСЧЕТ И РЕЗУЛЬТАТ ===========
-function showCalculationResult(chatId, user) {
-  console.log('Показываем результат для:', user);
-  
+// =========== ПОКАЗ РЕЗУЛЬТАТА ===========
+function showResult(chatId, user) {
   // Расчет
   const area = (user.width / 1000) * (user.height / 1000);
   let price = area * 18000;
@@ -233,77 +204,46 @@ function showCalculationResult(chatId, user) {
   
   // Скидка
   let discount = 0;
-  let discountText = '';
-  if (price > 200000) {
-    discount = 0.10;
-    discountText = ' (скидка 10% за заказ от 200 000 ₽)';
-  } else if (price > 150000) {
-    discount = 0.07;
-    discountText = ' (скидка 7% за заказ от 150 000 ₽)';
-  } else if (price > 100000) {
-    discount = 0.05;
-    discountText = ' (скидка 5% за заказ от 100 000 ₽)';
-  }
+  if (price > 200000) discount = 0.10;
+  else if (price > 150000) discount = 0.07;
+  else if (price > 100000) discount = 0.05;
   
   const finalPrice = Math.round(price * (1 - discount));
-  const currentDate = new Date().toLocaleDateString('ru-RU', {
-    day: 'numeric',
-    month: 'long',
-    year: 'numeric'
-  });
+  const date = new Date().toLocaleDateString('ru-RU');
   
-  // Сохраняем расчет для возможной заявки
-  pendingOrders[chatId] = {
-    data: { 
-      width: user.width,
-      height: user.height,
-      automation: user.automation,
-      installation: user.installation
-    },
+  // Сохраняем расчет
+  const orderData = {
+    width: user.width,
+    height: user.height,
+    automation: user.automation,
+    installation: user.installation,
     finalPrice,
-    area: area.toFixed(2),
-    date: currentDate
+    date
   };
   
   // Формируем сообщение
   const message = 
     `✅ *Предварительный расчет готов!*\n\n` +
-    `📋 *Комплектация заказа:*\n` +
-    `Ворота секционные с пружинами растяжения\n\n` +
+    `📋 *Параметры:*\n` +
     `• Ширина: ${user.width} мм\n` +
     `• Высота: ${user.height} мм\n` +
-    `• Автоматика: ${user.automation ? 'Да (с пультом ДУ)' : 'Нет (ручное управление)'}\n` +
-    `• Установка: ${user.installation ? 'Да (под ключ)' : 'Нет (самостоятельная установка)'}\n\n` +
-    `💰 *Итого: ~${finalPrice.toLocaleString('ru-RU')} ₽*${discountText}\n\n` +
+    `• Автоматика: ${user.automation ? 'Да' : 'Нет'}\n` +
+    `• Установка: ${user.installation ? 'Под ключ' : 'Сам'}\n\n` +
+    `💰 *Итого: ~${finalPrice.toLocaleString('ru-RU')} ₽*\n\n` +
     `📝 *Расчет предварительный!*\n` +
-    `Точную стоимость на ${currentDate} с учетом всех актуальных скидок подскажет менеджер.\n\n` +
-    `👇 *Для получения точного расчета:*`;
+    `Точную стоимость на ${date} с учетом всех скидок подскажет менеджер!\n\n` +
+    `👇 *Для точного расчета:*`;
   
-  // Кнопки под сообщением
   const buttons = {
     reply_markup: {
       inline_keyboard: [
         [
-          { 
-            text: '📱 Оставить заявку на точный расчет', 
-            callback_data: 'request_exact_calc'
-          }
+          { text: '📱 Оставить заявку', callback_data: 'request_exact' },
+          { text: '💬 Менеджер', url: 'https://t.me/systema365' }
         ],
         [
-          { 
-            text: '💬 Написать менеджеру', 
-            url: 'https://t.me/systema365' 
-          },
-          { 
-            text: '📞 Позвонить', 
-            url: 'tel:89238115432' 
-          }
-        ],
-        [
-          { 
-            text: '🔄 Новый расчет', 
-            callback_data: 'new_calculation' 
-          }
+          { text: '📞 Позвонить', url: 'tel:89238115432' },
+          { text: '🔄 Новый расчет', callback_data: 'new' }
         ]
       ]
     }
@@ -311,120 +251,88 @@ function showCalculationResult(chatId, user) {
   
   bot.sendMessage(chatId, message, { 
     parse_mode: 'Markdown', 
-    disable_web_page_preview: true,
     ...buttons 
   });
   
-  // Очищаем пользовательские данные ПОСЛЕ показа результата
-  users[chatId] = { step: 'start' };
+  // Сохраняем данные заказа для возможной заявки
+  users[chatId].orderData = orderData;
 }
 
-// =========== КНОПКИ ПОД СООБЩЕНИЕМ ===========
+// =========== ИНЛАЙН-КНОПКИ ===========
 bot.on('callback_query', (query) => {
   const chatId = query.message.chat.id;
-  const user = query.from;
+  const data = query.data;
   
-  if (query.data === 'request_exact_calc') {
-    const order = pendingOrders[chatId];
-    
-    if (!order) {
-      bot.sendMessage(chatId, '❌ Расчет не найден. Пожалуйста, выполните расчет заново.');
+  if (data === 'request_exact') {
+    const user = users[chatId];
+    if (!user || !user.orderData) {
+      bot.sendMessage(chatId, '❌ Расчет не найден. Начните заново.');
       return;
     }
     
-    // Показываем заявку и запрашиваем телефон
-    const requestMessage = 
-      `📋 *ВАША ЗАЯВКА НА ТОЧНЫЙ РАСЧЕТ*\n\n` +
-      `• Ширина: ${order.data.width} мм\n` +
-      `• Высота: ${order.data.height} мм\n` +
-      `• Автоматика: ${order.data.automation ? 'Да' : 'Нет'}\n` +
-      `• Установка: ${order.data.installation ? 'Под ключ' : 'Сам'}\n` +
-      `• Примерная стоимость: ~${order.finalPrice.toLocaleString('ru-RU')} ₽\n\n` +
-      `👇 *Укажите ваш номер телефона, и менеджер свяжется для уточнения деталей:*\n\n` +
-      `_Например: +7 999 123-45-67 или 89991234567_`;
+    const order = user.orderData;
     
-    bot.sendMessage(chatId, requestMessage, {
-      parse_mode: 'Markdown',
-      reply_markup: {
-        force_reply: true,
-        selective: true,
-        input_field_placeholder: 'Ваш номер телефона'
+    bot.sendMessage(
+      chatId,
+      `📋 *Заявка на точный расчет*\n\n` +
+      `• Ширина: ${order.width} мм\n` +
+      `• Высота: ${order.height} мм\n` +
+      `• Автоматика: ${order.automation ? 'Да' : 'Нет'}\n` +
+      `• Установка: ${order.installation ? 'Под ключ' : 'Сам'}\n` +
+      `• Примерная стоимость: ~${order.finalPrice.toLocaleString('ru-RU')} ₽\n\n` +
+      `👇 *Введите ваш номер телефона:*\n_Менеджер свяжется для уточнения деталей_`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          force_reply: true,
+          selective: true,
+          input_field_placeholder: 'Например: 8 999 123-45-67'
+        }
       }
-    }).then(sentMessage => {
-      // Ожидаем ответ с номером телефона
-      bot.onReplyToMessage(sentMessage.chat.id, sentMessage.message_id, (phoneMsg) => {
+    ).then(sentMsg => {
+      bot.onReplyToMessage(sentMsg.chat.id, sentMsg.message_id, (phoneMsg) => {
         const phone = phoneMsg.text.trim();
         const requestId = 'REQ-' + Date.now().toString().slice(-6);
         
-        // Подтверждение клиенту
+        // Ответ клиенту
         bot.sendMessage(
           chatId,
           `📨 *Заявка #${requestId} принята!*\n\n` +
           `✅ Ваш номер: ${phone}\n` +
-          `✅ Параметры расчета сохранены\n\n` +
-          `⏱️ *Менеджер @systema365 свяжется в течение 15 минут*\n\n` +
-          `📞 *Также вы можете позвонить:*\n` +
-          `8 (923) 811-54-32\n\n` +
-          `💬 *Быстрая связь:*`,
-          {
-            parse_mode: 'Markdown',
-            reply_markup: {
-              inline_keyboard: [[
-                { 
-                  text: '💬 Написать менеджеру', 
-                  url: 'https://t.me/systema365' 
-                },
-                { 
-                  text: '📞 Позвонить', 
-                  url: 'tel:89238115432' 
-                }
-              ]]
-            }
-          }
+          `⏱️ Менеджер @systema365 свяжется в течение 15 минут\n\n` +
+          `📞 *Также можете позвонить:*\n8 (923) 811-54-32`,
+          { parse_mode: 'Markdown' }
         );
         
-        // Уведомление админу (если настроен ADMIN_CHAT_ID в переменных окружения)
-        const adminChatId = process.env.ADMIN_CHAT_ID;
-        if (adminChatId) {
-          const adminMessage = 
-            `🔥 *НОВАЯ ЗАЯВКА НА РАСЧЕТ #${requestId}*\n\n` +
-            `👤 *Клиент:* ${user.first_name}${user.last_name ? ' ' + user.last_name : ''}\n` +
-            `👤 Username: @${user.username || 'нет'}\n` +
-            `🆔 ID: ${chatId}\n` +
+        // Уведомление админу (если настроен)
+        const adminId = process.env.ADMIN_CHAT_ID;
+        if (adminId) {
+          const userInfo = query.from;
+          bot.sendMessage(
+            adminId,
+            `🔥 НОВАЯ ЗАЯВКА #${requestId}\n\n` +
+            `👤 Клиент: ${userInfo.first_name}\n` +
             `📱 Телефон: ${phone}\n` +
-            `📅 Время: ${new Date().toLocaleString('ru-RU')}\n\n` +
-            `📏 *Параметры заявки:*\n` +
-            `• Ширина: ${order.data.width} мм\n` +
-            `• Высота: ${order.data.height} мм\n` +
-            `• Автоматика: ${order.data.automation ? 'Да' : 'Нет'}\n` +
-            `• Установка: ${order.data.installation ? 'Под ключ' : 'Сам'}\n` +
-            `💰 *Примерная стоимость:* ~${order.finalPrice.toLocaleString('ru-RU')} ₽\n\n` +
-            `💬 *Для связи с клиентом:*`;
-          
-          bot.sendMessage(adminChatId, adminMessage, {
-            parse_mode: 'Markdown',
-            reply_markup: {
-              inline_keyboard: [[
-                { 
-                  text: '📞 Позвонить клиенту', 
-                  url: `tel:${phone.replace(/\D/g, '')}` 
-                }
-              ]]
-            }
-          });
+            `🆔 ID: ${chatId}\n\n` +
+            `📏 Параметры:\n` +
+            `• ${order.width} × ${order.height} мм\n` +
+            `• Автоматика: ${order.automation ? 'Да' : 'Нет'}\n` +
+            `• Установка: ${order.installation ? 'Под ключ' : 'Сам'}\n` +
+            `💰 ~${order.finalPrice.toLocaleString('ru-RU')} ₽`,
+            { reply_markup: { inline_keyboard: [[
+              { text: '📞 Позвонить клиенту', url: `tel:${phone.replace(/\D/g, '')}` }
+            ]] }}
+          );
         }
         
-        // Очищаем сохраненный расчет
-        delete pendingOrders[chatId];
+        // Очищаем данные
+        delete users[chatId].orderData;
       });
     });
     
-  } else if (query.data === 'new_calculation') {
+  } else if (data === 'new') {
     users[chatId] = { step: 'start' };
-    delete pendingOrders[chatId];
-    bot.sendMessage(chatId, '🚀 Начать новый расчет?', keyboards.start);
-  } else if (query.data === 'call') {
-    bot.sendMessage(chatId, '📞 *Телефон для связи:*\n8 (923) 811-54-32', { parse_mode: 'Markdown' });
+    bot.sendMessage(chatId, '🚀 Начать расчет?', Keyboards.main);
   }
   
   bot.answerCallbackQuery(query.id);
@@ -432,27 +340,9 @@ bot.on('callback_query', (query) => {
 
 // =========== ОШИБКИ ===========
 bot.on('polling_error', (error) => {
-  console.log('Ошибка бота:', error.message);
+  console.log('Ошибка:', error.message);
 });
 
-bot.on('error', (error) => {
-  console.log('Общая ошибка:', error.message);
-});
-
-// Для отладки - выводим состояние каждые 30 секунд
-setInterval(() => {
-  console.log('=== ДЕБАГ ===');
-  console.log('Активных пользователей:', Object.keys(users).length);
-  console.log('Ожидающих заказов:', Object.keys(pendingOrders).length);
-}, 30000);
-
-console.log('🤖 Бот полностью готов к работе!');
+console.log('🤖 Бот готов!');
 console.log('📞 Телефон: 8 (923) 811-54-32');
-console.log('👨‍💼 Менеджер: @systema365');
-console.log('\n✅ Все функции активированы:');
-console.log('  • Кнопка "✅ Установка под ключ" - РАБОТАЕТ');
-console.log('  • Кнопка "❌ Установлю сам" - РАБОТАЕТ');
-console.log('  • Расчет стоимости с скидками');
-console.log('  • Заявки на точный расчет');
-console.log('  • Кликабельные телефоны');
-console.log('  • Кнопка "Начать сначала"');
+console.log('💬 Менеджер: @systema365');
