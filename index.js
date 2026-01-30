@@ -4,11 +4,11 @@ const bot = new TelegramBot(token, { polling: true });
 
 const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID || 'ВАШ_CHAT_ID';
 
-console.log('🚀 Бот запущен! Упрощенная версия');
+console.log('🚀 Бот запущен с кнопкой телефона!');
 
-// ОЧЕНЬ ПРОСТОЕ ХРАНИЛИЩЕ
-const users = {}; // {chatId: {step, data}}
-const waitingForPhone = {}; // {chatId: true}
+// ХРАНИЛИЩЕ
+const users = {};
+const waitingForPhone = {};
 
 // КЛАВИАТУРЫ
 const mainKeyboard = {
@@ -51,6 +51,17 @@ const installationKeyboard = {
   }
 };
 
+// ⚠️ НОВАЯ КЛАВИАТУРА ДЛЯ ТЕЛЕФОНА!
+const phoneKeyboard = {
+  reply_markup: {
+    keyboard: [
+      ['📱 Отправить телефон'],
+      ['🔄 Сначала']
+    ],
+    resize_keyboard: true
+  }
+};
+
 // START
 bot.onText(/\/start/, (msg) => {
   const chatId = msg.chat.id;
@@ -70,7 +81,7 @@ bot.on('message', async (msg) => {
   
   console.log(`📨 ${chatId}: "${text}" | Шаг: ${users[chatId]?.step || 'нет'} | Жду тел: ${waitingForPhone[chatId] ? 'ДА' : 'НЕТ'}`);
   
-  // ЕСЛИ ЖДЕМ ТЕЛЕФОН - ОБРАБАТЫВАЕМ ЕГО
+  // ЕСЛИ ЖДЕМ ТЕЛЕФОН
   if (waitingForPhone[chatId]) {
     console.log(`📱 ПРИНЯЛ ТЕЛЕФОН: ${text}`);
     await processPhone(chatId, text, msg.from);
@@ -90,6 +101,28 @@ bot.on('message', async (msg) => {
     delete waitingForPhone[chatId];
     bot.sendMessage(chatId, '🚀 Начать расчет?', mainKeyboard);
     return;
+  }
+  
+  // КНОПКА "ОТПРАВИТЬ ТЕЛЕФОН"
+  if (text === '📱 Отправить телефон') {
+    if (user.step === 'showResult' && user.orderData) {
+      // Показываем инструкцию
+      bot.sendMessage(chatId,
+        `📞 *Введите номер телефона:*\n\n` +
+        `Просто напишите номер в любом формате:\n` +
+        `• 89246345577\n` +
+        `• +7 924 634-55-77\n` +
+        `• 8-924-634-55-77\n\n` +
+        `Или нажмите "🔄 Сначала"`,
+        { parse_mode: 'Markdown' }
+      );
+      waitingForPhone[chatId] = true;
+      console.log(`✅ УСТАНОВЛЕН waitingForPhone[${chatId}] после кнопки`);
+      return;
+    } else {
+      bot.sendMessage(chatId, '❌ Сначала выполните расчет!', mainKeyboard);
+      return;
+    }
   }
   
   // НАЧАТЬ РАСЧЕТ
@@ -165,18 +198,18 @@ bot.on('message', async (msg) => {
     return;
   }
   
-  // УСТАНОВКА - КРИТИЧЕСКИЙ МОМЕНТ!
+  // УСТАНОВКА
   if (user.step === 'askInstallation') {
     if (text === '✅ Установка под ключ' || text === '❌ Установлю сам') {
       user.installation = text === '✅ Установка под ключ';
-      await showResultAndAskPhone(chatId, user);
+      await showResult(chatId, user);
     }
     return;
   }
 });
 
-// ФУНКЦИЯ ПОКАЗА РЕЗУЛЬТАТА И ЗАПРОСА ТЕЛЕФОНА
-async function showResultAndAskPhone(chatId, user) {
+// ФУНКЦИЯ ПОКАЗА РЕЗУЛЬТАТА
+async function showResult(chatId, user) {
   console.log(`🧮 РАСЧЕТ ДЛЯ ${chatId}: ${user.width}x${user.height}`);
   
   // Расчет
@@ -203,7 +236,9 @@ async function showResultAndAskPhone(chatId, user) {
     area: area.toFixed(2)
   };
   
-  // Показываем результат
+  user.step = 'showResult';
+  
+  // Показываем результат С КНОПКОЙ ТЕЛЕФОНА
   const message = 
     `✅ *Предварительный расчет готов!*\n\n` +
     `📋 *Параметры заказа:*\n` +
@@ -213,17 +248,14 @@ async function showResultAndAskPhone(chatId, user) {
     `• Установка: ${user.installation ? 'Под ключ' : 'Сам'}\n\n` +
     `💰 *Примерная стоимость: ~${finalPrice.toLocaleString('ru-RU')} ₽*\n\n` +
     `📝 *Точную стоимость со всеми скидками укажет менеджер!*\n\n` +
-    `👇 *Укажите номер, куда Вам позвонить?*\n` +
-    `_(просто напишите номер телефона)_`;
+    `👇 *Чтобы получить консультацию, отправьте номер телефона:*`;
   
   await bot.sendMessage(chatId, message, { 
     parse_mode: 'Markdown',
-    reply_markup: { remove_keyboard: true }
+    ...phoneKeyboard  // ⚠️ КНОПКА "ОТПРАВИТЬ ТЕЛЕФОН"
   });
   
-  // ⚠️ ВАЖНО: УСТАНАВЛИВАЕМ ФЛАГ ОЖИДАНИЯ ТЕЛЕФОНА!
-  waitingForPhone[chatId] = true;
-  console.log(`✅ УСТАНОВЛЕН waitingForPhone[${chatId}] = true`);
+  console.log(`✅ Показан результат для ${chatId}, жду кнопку телефона`);
 }
 
 // ОБРАБОТКА ТЕЛЕФОНА
@@ -345,7 +377,7 @@ bot.onText(/\/test/, (msg) => {
   
   // Создаем тестовые данные
   users[chatId] = {
-    step: 'askInstallation',
+    step: 'showResult',
     width: 3000,
     height: 2500,
     automation: true,
@@ -360,22 +392,19 @@ bot.onText(/\/test/, (msg) => {
     }
   };
   
-  // Включаем режим ожидания телефона
-  waitingForPhone[chatId] = true;
-  
   bot.sendMessage(chatId,
-    `✅ ТЕСТОВЫЙ РЕЖИМ ВКЛЮЧЕН!\n\n` +
+    `✅ ТЕСТОВЫЙ РАСЧЕТ!\n\n` +
     `📏 Размеры: 3000x2500\n` +
     `⚙️ Автоматика: Да\n` +
     `🏗️ Установка: Под ключ\n` +
     `💰 Стоимость: ~146 475 ₽\n\n` +
-    `📞 Теперь введите номер телефона для проверки`,
-    { parse_mode: 'Markdown' }
+    `📱 Нажмите кнопку "Отправить телефон"`,
+    { parse_mode: 'Markdown', ...phoneKeyboard }
   );
 });
 
 console.log('==================================');
-console.log('🤖 УПРОЩЕННЫЙ БОТ ЗАПУЩЕН');
+console.log('🤖 БОТ С КНОПКОЙ ТЕЛЕФОНА ЗАПУЩЕН');
 console.log('📞 Телефон: 8 (923) 811-54-32');
 console.log('💬 Менеджер: @systema365');
 console.log('🔧 Команды: /debug, /test');
