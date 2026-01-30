@@ -1,15 +1,12 @@
 {
-  "name": "gate-bot",
-  "version": "2.0.0",
+  "name": "gate-bot-simple",
+  "version": "1.0.0",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
-    "dotenv": "^16.4.5",
-    "node-telegram-bot-api": "^0.64.0"
-  },
-  "engines": {
-    "node": ">=18.0.0"
+    "dotenv": "^16.0.0",
+    "node-telegram-bot-api": "^0.61.0"
   }
 }
