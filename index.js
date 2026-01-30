@@ -42,6 +42,8 @@ const PRICES = {
 
 // Хранилище сессий
 const userSessions = new Map();
+// Хранилище расчетов для заявок (chatId -> данные)
+const calculationsForRequests = new Map();
 
 // ============================================
 // ГЛАВНОЕ МЕНЮ
@@ -61,7 +63,8 @@ const mainMenu = {
 // ============================================
 bot.onText(/\/start/, (msg) => {
   const chatId = msg.chat.id;
-  userSessions.delete(chatId); // Очищаем сессию
+  userSessions.delete(chatId);
+  calculationsForRequests.delete(chatId);
   
   bot.sendMessage(
     chatId,
@@ -82,6 +85,7 @@ bot.onText(/\/start/, (msg) => {
 bot.onText(/\/new/, (msg) => {
   const chatId = msg.chat.id;
   userSessions.delete(chatId);
+  calculationsForRequests.delete(chatId);
   startCalculation(chatId);
 });
 
@@ -92,32 +96,10 @@ bot.on('message', (msg) => {
   const chatId = msg.chat.id;
   const text = msg.text;
   
-  // Проверяем сессию пользователя СНАЧАЛА
-  const session = userSessions.get(chatId);
-  
-  // Если ЕСТЬ сессия, проверяем шаг установки ОТДЕЛЬНО
-  if (session && session.step === 'ask_installation') {
-    if (text === '✅ Нужна установка под ключ') {
-      session.data.installation = true;
-      // Показываем результат
-      showResult(chatId, session.data);
-      userSessions.delete(chatId);
-      return;
-    } else if (text === '❌ Нет, установлю сам') {
-      session.data.installation = false;
-      // Показываем результат
-      showResult(chatId, session.data);
-      userSessions.delete(chatId);
-      return;
-    }
-    // Если не валидный ответ на шаге установки, продолжаем обычную обработку
-  }
-  
-  // Теперь общая обработка (кроме валидных ответов на шаге установки)
-  
   // 1. Кнопка "Начать заново" в любом месте
   if (text === '🔄 Начать заново') {
     userSessions.delete(chatId);
+    calculationsForRequests.delete(chatId);
     startCalculation(chatId);
     return;
   }
@@ -128,7 +110,8 @@ bot.on('message', (msg) => {
     return;
   }
   
-  // Если нет сессии
+  // Проверяем сессию пользователя
+  const session = userSessions.get(chatId);
   if (!session) {
     // Если нет сессии, но пользователь что-то пишет - предлагаем начать
     if (text && !text.startsWith('/')) {
@@ -198,6 +181,7 @@ bot.on('message', (msg) => {
       }
       
       userSessions.delete(chatId);
+      calculationsForRequests.delete(chatId);
     } else {
       bot.sendMessage(
         chatId,
@@ -299,31 +283,38 @@ bot.on('message', (msg) => {
     );
   }
   
-  // Шаг 5: Установка - Обработка невалидных ответов
+  // Шаг 5: Установка
   else if (session.step === 'ask_installation') {
-    // Сюда попадаем только если ответ НЕ "✅ Нужна установка под ключ" или "❌ Нет, установлю сам"
-    // так как они обработаны в начале функции
-    
-    if (text === '🔙 Назад' || text === '🔄 Начать заново') {
-      // Эти кнопки уже обработаны выше
-      return;
-    }
-    
-    // Любой другой текст
-    bot.sendMessage(
-      chatId,
-      '❌ Выберите вариант из кнопок',
-      {
-        reply_markup: {
-          keyboard: [
-            ['✅ Нужна установка под ключ'],
-            ['❌ Нет, установлю сам'],
-            ['🔙 Назад', '🔄 Начать заново']
-          ],
-          resize_keyboard: true
+    if (text === '✅ Нужна установка под ключ') {
+      session.data.installation = true;
+      // Сохраняем расчет и показываем результат
+      const calculationData = showResult(chatId, session.data);
+      // Сохраняем для возможной заявки
+      calculationsForRequests.set(chatId, calculationData);
+      userSessions.delete(chatId);
+    } else if (text === '❌ Нет, установлю сам') {
+      session.data.installation = false;
+      // Сохраняем расчет и показываем результат
+      const calculationData = showResult(chatId, session.data);
+      // Сохраняем для возможной заявки
+      calculationsForRequests.set(chatId, calculationData);
+      userSessions.delete(chatId);
+    } else {
+      bot.sendMessage(
+        chatId,
+        '❌ Выберите вариант из кнопок',
+        {
+          reply_markup: {
+            keyboard: [
+              ['✅ Нужна установка под ключ'],
+              ['❌ Нет, установлю сам'],
+              ['🔙 Назад', '🔄 Начать заново']
+            ],
+            resize_keyboard: true
+          }
         }
-      }
-    );
+      );
+    }
   }
 });
 
@@ -447,6 +438,15 @@ function showResult(chatId, data) {
     year: 'numeric'
   });
   
+  // Сохраняем данные расчета
+  const calculationData = {
+    data: { ...data },
+    finalPrice,
+    area: parseFloat(area.toFixed(2)),
+    date: new Date().toISOString(),
+    formattedDate
+  };
+  
   // Формируем сообщение клиенту
   const message = 
     `✅ *Предварительный расчет готов!*\n\n` +
@@ -479,6 +479,8 @@ function showResult(chatId, data) {
       }
     }
   );
+  
+  return calculationData;
 }
 
 // ============================================
@@ -488,29 +490,45 @@ bot.on('callback_query', async (callbackQuery) => {
   const chatId = callbackQuery.message.chat.id;
   const messageId = callbackQuery.message.message_id;
   const data = callbackQuery.data;
+  const user = callbackQuery.from;
   
   if (data === 'exact_calc') {
-    const user = callbackQuery.from;
+    // 1. Сначала показываем клиенту ЧТО он отправляет
+    const calculationData = calculationsForRequests.get(chatId);
     
-    // Запрос контактных данных у клиента
+    if (!calculationData) {
+      bot.sendMessage(chatId, '❌ Расчет не найден. Пожалуйста, выполните расчет заново.');
+      return;
+    }
+    
+    const orderSummary = 
+      `📋 *ВАША ЗАЯВКА НА ТОЧНЫЙ РАСЧЕТ*\n\n` +
+      `• Ширина: ${calculationData.data.width} мм\n` +
+      `• Высота: ${calculationData.data.height} мм\n` +
+      `• Автоматика: ${calculationData.data.automation ? 'Да' : 'Нет'}\n` +
+      `• Установка: ${calculationData.data.installation ? 'Под ключ' : 'Сам'}\n` +
+      `• Примерная стоимость: ~${calculationData.finalPrice.toLocaleString('ru-RU')} ₽\n\n` +
+      `👇 *Укажите ваш номер телефона для связи:*`;
+    
+    // 2. Показываем заявку и запрашиваем телефон
     await bot.sendMessage(
       chatId,
-      `💰 *УЗНАТЬ ТОЧНУЮ СТОИМОСТЬ*\n\n` +
-      `Пожалуйста, укажите ваш номер телефона для связи:\n` +
-      `(Напишите номер в любом формате)`,
+      orderSummary,
       {
         parse_mode: 'Markdown',
         reply_markup: {
           force_reply: true,
-          selective: true
+          selective: true,
+          input_field_placeholder: 'Например: +7 999 123-45-67'
         }
       }
     ).then((sentMessage) => {
+      // 3. Ждем ответ с номером телефона
       bot.onReplyToMessage(sentMessage.chat.id, sentMessage.message_id, async (phoneMsg) => {
-        const phone = phoneMsg.text;
+        const phone = phoneMsg.text.trim();
         const requestId = 'REQ-' + Date.now().toString().slice(-6);
         
-        // Сообщение клиенту
+        // 4. Сообщение клиенту что заявка принята
         await bot.sendMessage(
           chatId,
           `📨 *Заявка #${requestId} принята!*\n\n` +
@@ -530,49 +548,65 @@ bot.on('callback_query', async (callbackQuery) => {
           }
         );
         
-        // Уведомление админу
+        // 5. Уведомление админу
         if (ADMIN_CHAT_ID) {
-          await bot.sendMessage(
-            ADMIN_CHAT_ID,
+          const adminMessage = 
             `🔥 *НОВАЯ ЗАЯВКА НА РАСЧЕТ #${requestId}*\n\n` +
             `👤 *Клиент:* ${user.first_name}${user.last_name ? ' ' + user.last_name : ''}\n` +
             `👤 Username: ${user.username ? '@' + user.username : 'нет'}\n` +
             `🆔 ID: ${chatId}\n` +
             `📱 Телефон: ${phone}\n` +
             `📅 Время: ${new Date().toLocaleString('ru-RU')}\n\n` +
-            `📏 *Параметры заявки:*\n` +
-            `• Ширина: ${callbackQuery.message.text.match(/Ширина: (\d+)/)?.[1] || 'не указано'} мм\n` +
-            `• Высота: ${callbackQuery.message.text.match(/Высота: (\d+)/)?.[1] || 'не указано'} мм\n` +
-            `• Автоматика: ${callbackQuery.message.text.includes('Автоматика: Да') ? 'Да' : 'Нет'}\n` +
-            `• Установка: ${callbackQuery.message.text.includes('Под ключ') ? 'Под ключ' : 'Сам'}\n` +
-            `💰 *Примерная стоимость:* ${callbackQuery.message.text.match(/Итого: ~([\d\s]+) ₽/)?.[1] || 'не рассчитано'}\n\n` +
+            `📏 *ПАРАМЕТРЫ ЗАЯВКИ:*\n` +
+            `• Ширина: ${calculationData.data.width} мм\n` +
+            `• Высота: ${calculationData.data.height} мм\n` +
+            `• Автоматика: ${calculationData.data.automation ? 'Да' : 'Нет'}\n` +
+            `• Установка: ${calculationData.data.installation ? 'Под ключ' : 'Сам'}\n` +
+            `• Площадь: ${calculationData.area} м²\n` +
+            `💰 *Примерная стоимость:* ${calculationData.finalPrice.toLocaleString('ru-RU')} ₽\n\n` +
             `💬 *Для ответа клиенту:*\n` +
             `1. Ответьте на это сообщение\n` +
             `2. Напишите точную цену и условия\n` +
-            `3. Я перешлю ваш ответ клиенту`,
+            `3. Я перешлю ваш ответ клиенту`;
+          
+          await bot.sendMessage(
+            ADMIN_CHAT_ID,
+            adminMessage,
             {
               parse_mode: 'Markdown',
               reply_markup: {
                 inline_keyboard: [[
-                  { text: '📞 Позвонить клиенту', url: `tel:${phone.replace(/\D/g, '')}` }
+                  { text: '📞 Позвонить клиенту', url: `tel:${phone.replace(/\D/g, '')}` },
+                  { text: '💬 Ответить клиенту', callback_data: `reply_${requestId}` }
                 ]]
               }
             }
           ).then((adminMsg) => {
+            // Сохраняем связь для ответа админа
             userSessions.set(`admin_${adminMsg.message_id}`, {
               clientChatId: chatId,
               clientMessageId: messageId,
               requestId,
               phone,
-              userInfo: user
+              userInfo: user,
+              calculationData: calculationData.data,
+              finalPrice: calculationData.finalPrice
             });
+            
+            console.log(`✅ Заявка #${requestId} отправлена админу ${ADMIN_CHAT_ID}`);
+          }).catch(err => {
+            console.error('❌ Ошибка отправки админу:', err.message);
           });
         }
+        
+        // 6. Очищаем данные расчета
+        calculationsForRequests.delete(chatId);
       });
     });
   }
   else if (data === 'new_calc') {
     userSessions.delete(chatId);
+    calculationsForRequests.delete(chatId);
     startCalculation(chatId);
   }
   
@@ -586,6 +620,7 @@ bot.on('message', (msg) => {
   const chatId = msg.chat.id;
   const text = msg.text;
   
+  // Проверяем если сообщение от админа и является ответом
   if (chatId.toString() === ADMIN_CHAT_ID && msg.reply_to_message) {
     const repliedMsgId = msg.reply_to_message.message_id;
     const sessionKey = `admin_${repliedMsgId}`;
@@ -597,6 +632,7 @@ bot.on('message', (msg) => {
       // Текущая дата для ответа
       const currentDate = new Date().toLocaleDateString('ru-RU');
       
+      // Отправляем ответ клиенту
       bot.sendMessage(
         clientChatId,
         `📞 *ОТВЕТ ОТ МЕНЕДЖЕРА ПО ЗАЯВКЕ #${requestId}*\n\n` +
@@ -617,13 +653,19 @@ bot.on('message', (msg) => {
           }
         }
       ).then(() => {
+        // Уведомляем админа об успешной отправке
         bot.sendMessage(
           ADMIN_CHAT_ID,
           `✅ Ответ по заявке #${requestId} отправлен клиенту`,
           { reply_to_message_id: msg.message_id }
         );
+        
+        console.log(`✅ Ответ по заявке #${requestId} отправлен клиенту ${clientChatId}`);
+      }).catch(err => {
+        console.error('❌ Ошибка отправки ответа клиенту:', err.message);
       });
       
+      // Удаляем сессию
       userSessions.delete(sessionKey);
     }
   }
@@ -636,8 +678,14 @@ bot.on('polling_error', (error) => {
   console.error('❌ Ошибка бота:', error.message);
 });
 
+bot.on('error', (error) => {
+  console.error('❌ Общая ошибка бота:', error.message);
+});
+
 // ============================================
 // ЗАПУСК
 // ============================================
 console.log('🤖 Бот готов к работе!');
 console.log('⏳ Ожидаю сообщений...');
+console.log('📞 Номер для связи:', PHONE_NUMBER);
+console.log('👨‍💼 Менеджер:', MANAGER_USERNAME);
